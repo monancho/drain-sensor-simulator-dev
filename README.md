@@ -76,6 +76,25 @@ make run
 6. `목업 센서 데이터`에서 snapshot JSON과 flat JSONL records를 내려받을 수 있습니다.
 7. `시나리오 타임라인 목업`에서 여러 step의 timeseries payload를 미리 보고, 센서 현실감 옵션을 켤 수 있습니다.
 
+![Drain Sensor Simulator demo](docs/demo-assets/streamlit-dashboard.png)
+
+데모 스크린샷이나 GIF는 `docs/demo-assets/`에 보관합니다.
+
+## Streamlit Community Cloud 배포
+
+GitHub push가 끝난 뒤 Streamlit Community Cloud에서 바로 공개 데모를 만들 수 있습니다.
+
+1. `https://share.streamlit.io`에 GitHub 계정으로 로그인합니다.
+2. `Create app`을 누르고 이 저장소, `main` 브랜치, entrypoint `app.py`를 선택합니다.
+3. Python dependency는 루트의 `requirements.txt`를 사용합니다.
+4. 이 프로젝트는 외부 secrets가 필요 없습니다. `.streamlit/secrets.toml`은 만들지 않습니다.
+5. 배포 후 생성된 `*.streamlit.app` URL을 README 상단이나 GitHub repo About 영역에 추가합니다.
+
+공식 문서:
+
+- [Prep and deploy your app on Community Cloud](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app)
+- [App dependencies for Community Cloud](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/app-dependencies)
+
 ## 막힘 구분 정책
 
 | 구분 | 센서 패턴 |
@@ -160,6 +179,57 @@ curl "http://127.0.0.1:8765/api/v1/sensors/timeseries?scenario=rain_stops&steps=
 
 ```bash
 curl "http://127.0.0.1:8765/api/v1/sensors/timeseries?scenario=surface_blockage&steps=12&noise=true&noise_scale=0.03&seed=42"
+```
+
+주요 응답 구조:
+
+```json
+{
+  "schema_version": "virtual-drain-sensor.v1",
+  "source": "drain-sensor-simulator",
+  "scenario": {
+    "id": "surface_blockage",
+    "title_ko": "상부 막힘 진행",
+    "steps": 12,
+    "step_minutes": 1.0,
+    "quality": "mock"
+  },
+  "units": {
+    "surface_water_level": "normalized_0_1",
+    "inlet_flow": "normalized_0_1",
+    "pipe_water_level": "normalized_0_1",
+    "pipe_flow_speed": "normalized_0_1"
+  },
+  "snapshots": [
+    {
+      "inputs": {"rainfall": 0.85, "pipe_capacity": 1.0},
+      "readings": [
+        {
+          "sensor_id": "SIM-DRAIN_B",
+          "drain_id": "DRAIN_B",
+          "quality": "mock",
+          "status": "상부 유입 막힘 의심",
+          "blockage": {"location": "상부", "severity": 1.0},
+          "measurements": {
+            "surface_water_level": 0.8123,
+            "inlet_flow": 0.0,
+            "pipe_water_level": 0.18,
+            "pipe_flow_speed": 0.64
+          }
+        }
+      ]
+    }
+  ],
+  "records": [
+    {
+      "scenario_id": "surface_blockage",
+      "drain_id": "DRAIN_B",
+      "quality_flags": "mock",
+      "surface_water_level": 0.8123,
+      "inlet_flow": 0.0
+    }
+  ]
+}
 ```
 
 POST snapshot body:

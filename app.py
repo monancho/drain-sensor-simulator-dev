@@ -549,6 +549,8 @@ def render_timeseries_preview_panel() -> None:
     )
     records_df = pd.DataFrame(timeseries["records"])
     scenario = timeseries["scenario"]
+    timeseries_json = dumps_mock_sensor_payload(timeseries)
+    timeseries_records_jsonl = dumps_mock_sensor_records_jsonl(timeseries["records"])
 
     st.caption(
         f"{scenario['title_ko']} · {scenario['steps']} steps · "
@@ -563,11 +565,19 @@ def render_timeseries_preview_panel() -> None:
             st.pyplot(draw_history_plot(records_df, "pipe_flow_speed", "관로 유속 변화"))
         st.dataframe(records_df.tail(12), width="stretch", hide_index=True)
 
-    st.download_button(
+    download_cols = st.columns(2)
+    download_cols[0].download_button(
         "Timeseries JSON",
-        data=dumps_mock_sensor_payload(timeseries),
+        data=timeseries_json,
         file_name=f"mock_sensor_timeseries_{scenario_id}.json",
         mime="application/json",
+        width="stretch",
+    )
+    download_cols[1].download_button(
+        "Timeseries JSONL records",
+        data=timeseries_records_jsonl,
+        file_name=f"mock_sensor_timeseries_{scenario_id}.jsonl",
+        mime="application/x-ndjson",
         width="stretch",
     )
 
