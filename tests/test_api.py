@@ -75,3 +75,59 @@ def test_sensor_api_records_and_post_simulate_endpoints():
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_sensor_api_timeseries_and_post_scenario_endpoints():
+    server, base_url = run_test_server()
+    try:
+        timeseries = get_json(
+            f"{base_url}/api/v1/sensors/timeseries"
+            "?scenario=network_passthrough&steps=5"
+        )
+        scenario = post_json(
+            f"{base_url}/api/v1/sensors/scenario",
+            {
+                "scenario": "rain_stops",
+                "steps": 6,
+            },
+        )
+
+        assert timeseries["schema_version"] == SCHEMA_VERSION
+        assert timeseries["scenario"]["id"] == "network_passthrough"
+        assert len(timeseries["snapshots"]) == 5
+        assert len(timeseries["records"]) == 15
+        assert scenario["scenario"]["id"] == "rain_stops"
+        assert len(scenario["snapshots"]) == 6
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_sensor_api_realism_options_work_for_snapshot_and_timeseries():
+    server, base_url = run_test_server()
+    try:
+        snapshot = get_json(
+            f"{base_url}/api/v1/sensors/snapshot"
+            "?steps=3&missing=true&missing_rate=1&seed=9"
+        )
+        timeseries = post_json(
+            f"{base_url}/api/v1/sensors/scenario",
+            {
+                "scenario": "surface_blockage",
+                "steps": 4,
+                "realism": {
+                    "noise": True,
+                    "noise_scale": 0.03,
+                    "seed": 9,
+                },
+            },
+        )
+
+        assert snapshot["realism"]["missing"]["enabled"] is True
+        assert snapshot["readings"][0]["measurements"]["surface_water_level"] is None
+        assert "missing" in snapshot["readings"][0]["quality_flags"]
+        assert timeseries["realism"]["noise"]["enabled"] is True
+        assert any("noisy" in record["quality_flags"] for record in timeseries["records"])
+    finally:
+        server.shutdown()
+        server.server_close()

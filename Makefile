@@ -1,4 +1,4 @@
-.PHONY: install install-dev run run-api test lint format check
+.PHONY: install install-dev run run-api test lint format compile check
 
 install:
 	pip install -r requirements.txt
@@ -21,4 +21,7 @@ lint:
 format:
 	ruff format .
 
-check: lint test
+compile:
+	python -m py_compile app.py simulation.py sensor_model.py visualization.py canvas_renderer.py sensor_payload.py sensor_api_service.py api.py
+
+check: lint test compile

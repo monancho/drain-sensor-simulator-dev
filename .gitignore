@@ -4,5 +4,14 @@ __pycache__/
 .ruff_cache/
 .venv/
 .env
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+.streamlit/secrets.toml
+mock_sensor_*.json
+mock_sensor_*.jsonl
 .DS_Store
 *.log

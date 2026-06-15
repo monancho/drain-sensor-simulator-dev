@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from canvas_renderer import render_canvas
+from sensor_api_service import SCENARIO_DEFINITIONS, simulate_sensor_timeseries
 from sensor_model import attach_sensor_status
 from sensor_payload import (
     build_mock_sensor_payload,
@@ -467,6 +468,113 @@ def render_mock_sensor_panel(*, rainfall: float, pipe_capacity: float) -> None:
         st.json(payload, expanded=2)
 
 
+def render_timeseries_preview_panel() -> None:
+    """Render a scenario-based mock sensor timeseries preview."""
+
+    st.subheader("시나리오 타임라인 목업")
+    scenario_ids = list(SCENARIO_DEFINITIONS)
+    control_cols = st.columns([0.55, 0.45])
+    scenario_id = control_cols[0].selectbox(
+        "시나리오",
+        options=scenario_ids,
+        index=scenario_ids.index("surface_blockage"),
+        format_func=lambda key: SCENARIO_DEFINITIONS[key]["title_ko"],
+        key="timeseries_scenario_id",
+    )
+    preview_steps = control_cols[1].slider(
+        "타임라인 steps",
+        6,
+        60,
+        int(SCENARIO_DEFINITIONS[scenario_id]["default_steps"]),
+        1,
+        key="timeseries_preview_steps",
+    )
+    realism_enabled = st.checkbox(
+        "센서 현실감 적용",
+        value=False,
+        key="timeseries_realism_enabled",
+    )
+    realism_request: dict[str, float | int | str | bool] = {}
+    if realism_enabled:
+        realism_cols = st.columns([0.42, 0.28, 0.30])
+        selected_realism = realism_cols[0].multiselect(
+            "현실감 옵션",
+            options=["noise", "missing", "stale", "spike", "stuck", "delay"],
+            default=["noise"],
+            key="timeseries_realism_options",
+        )
+        realism_seed = realism_cols[1].number_input(
+            "seed",
+            min_value=0,
+            max_value=999999,
+            value=42,
+            step=1,
+            key="timeseries_realism_seed",
+        )
+        realism_intensity = realism_cols[2].slider(
+            "강도",
+            0.0,
+            1.0,
+            0.35,
+            0.05,
+            key="timeseries_realism_intensity",
+        )
+        realism_request = {
+            "seed": int(realism_seed),
+            "noise": "noise" in selected_realism,
+            "noise_scale": round(0.08 * realism_intensity, 4),
+            "missing": "missing" in selected_realism,
+            "missing_rate": round(0.18 * realism_intensity, 4),
+            "stale": "stale" in selected_realism,
+            "stale_rate": round(0.20 * realism_intensity, 4),
+            "spike": "spike" in selected_realism,
+            "spike_rate": round(0.16 * realism_intensity, 4),
+            "spike_magnitude": round(0.45 * realism_intensity, 4),
+            "stuck": "stuck" in selected_realism,
+            "stuck_drain_id": "DRAIN_C",
+            "stuck_field": "pipe_flow_speed",
+            "delay": "delay" in selected_realism,
+            "delay_steps": 1,
+        }
+
+    generated_at = datetime.now().isoformat(timespec="seconds")
+    timeseries = simulate_sensor_timeseries(
+        {
+            "scenario": scenario_id,
+            "steps": preview_steps,
+            "step_minutes": STEP_MINUTES,
+            "realism": realism_request,
+        },
+        generated_at=generated_at,
+    )
+    records_df = pd.DataFrame(timeseries["records"])
+    scenario = timeseries["scenario"]
+
+    st.caption(
+        f"{scenario['title_ko']} · {scenario['steps']} steps · "
+        f"{scenario['step_minutes']} min/step"
+    )
+
+    if not records_df.empty:
+        chart_cols = st.columns(2)
+        with chart_cols[0]:
+            st.pyplot(draw_history_plot(records_df, "surface_water_level", "도로 위 물고임 변화"))
+        with chart_cols[1]:
+            st.pyplot(draw_history_plot(records_df, "pipe_flow_speed", "관로 유속 변화"))
+        st.dataframe(records_df.tail(12), width="stretch", hide_index=True)
+
+    st.download_button(
+        "Timeseries JSON",
+        data=dumps_mock_sensor_payload(timeseries),
+        file_name=f"mock_sensor_timeseries_{scenario_id}.json",
+        mime="application/json",
+        width="stretch",
+    )
+
+    with st.expander("시나리오 JSON payload"):
+        st.json(timeseries, expanded=1)
+
+
 def render_live_dashboard_fragment(
     *,
     rainfall: float,
@@ -569,6 +677,7 @@ def main() -> None:
     )
     render_detail_panels()
     render_mock_sensor_panel(rainfall=rainfall, pipe_capacity=pipe_capacity)
+    render_timeseries_preview_panel()
 
     with st.expander("이 시뮬레이터의 한계"):
         st.markdown(

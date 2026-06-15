@@ -107,3 +107,24 @@ Canvas 시각화는 실제 유체역학 시뮬레이션이 아니라 **visual me
 - 경고 pulse = `stagnation_score`
 
 계산값 자체는 그대로 유지하고, 시각적 과장은 `visual_*` 계층에서만 사용한다.
+
+## 7. 목업 센서 Timeseries 정책
+
+시나리오 기반 timeseries는 실제 센서 API가 아니라, 현재 가상 센서 모델을 여러 time step으로 실행한 JSON 목업이다.
+
+- 각 snapshot은 `schema_version`, `network`, `units`, `readings`, `measurements`, `derived`, `status`를 유지한다.
+- timeseries payload는 여러 snapshot과 flat records를 함께 제공한다.
+- `rain_stops` 시나리오는 비가 그친 뒤 `surface_recession`으로 도로 물고임이 서서히 줄어드는지 확인하기 위한 데모다.
+- `network_passthrough` 시나리오는 B/C가 상부 막힘이어도 A에서 이미 관로로 들어간 흐름이 하류로 전달되는지 확인하기 위한 데모다.
+- 시나리오는 센서 패턴과 API 계약을 검증하기 위한 목업이며, CSV 학습 데이터 생성기나 실제 수리해석 엔진이 아니다.
+
+## 8. 센서 현실감 옵션 정책
+
+센서 현실감 옵션은 실제 센서 API 연결이 아니라, 목업 payload에 센서 품질 문제를 흉내 내기 위한 후처리다.
+
+- 기본값은 deterministic 목업이며 measurement 값이 임의로 흔들리지 않는다.
+- `noise`, `missing`, `stale`, `spike`, `stuck`, `delay`는 API request에서 선택적으로 켤 수 있다.
+- `seed`를 지정하면 같은 request는 같은 목업 센서 품질 패턴을 재현한다.
+- 현실감 옵션은 `measurements`에만 적용하고, `blockage`, `status`, `derived`는 깨끗한 시뮬레이션 기준값으로 유지한다.
+- 각 reading은 `quality_flags`와 `measurement_quality`로 어떤 센서 품질 문제가 섞였는지 표시한다.
+- 이 기능은 센서 API 계약과 UI 결측/이상값 대응을 검증하기 위한 것이며, 실제 센서 보정 모델이 아니다.

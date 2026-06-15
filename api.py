@@ -14,9 +14,12 @@ from urllib.parse import parse_qs, urlparse
 
 from sensor_api_service import (
     DEFAULT_API_DRAIN_CONFIGS,
+    REALISM_QUERY_FIELDS,
     SCHEMA_VERSION,
+    available_scenarios,
     simulate_sensor_records,
     simulate_sensor_snapshot,
+    simulate_sensor_timeseries,
 )
 from simulation import DRAIN_IDS
 
@@ -34,7 +37,14 @@ def request_from_query(query: dict[str, list[str]]) -> dict[str, Any]:
     """Convert query string values into a simulation request."""
 
     request: dict[str, Any] = {}
-    for field in ("rainfall", "pipe_capacity", "steps", "step_minutes"):
+    for field in (
+        "scenario",
+        "rainfall",
+        "pipe_capacity",
+        "steps",
+        "step_minutes",
+        *REALISM_QUERY_FIELDS,
+    ):
         value = first_query_value(query, field)
         if value is not None:
             request[field] = value
@@ -83,10 +93,13 @@ class SensorAPIHandler(BaseHTTPRequestHandler):
                     {
                         "schema_version": SCHEMA_VERSION,
                         "default_drains": DEFAULT_API_DRAIN_CONFIGS,
+                        "scenarios": available_scenarios(),
                         "endpoints": [
                             "GET /api/v1/sensors/snapshot",
                             "GET /api/v1/sensors/records",
+                            "GET /api/v1/sensors/timeseries",
                             "POST /api/v1/sensors/simulate",
+                            "POST /api/v1/sensors/scenario",
                         ],
                     }
                 )
@@ -105,18 +118,25 @@ class SensorAPIHandler(BaseHTTPRequestHandler):
                 )
                 return
 
+            if parsed.path == "/api/v1/sensors/timeseries":
+                self.send_json(simulate_sensor_timeseries(request_from_query(query)))
+                return
+
             self.send_json({"error": "not_found"}, status=404)
         except ValueError as exc:
             self.send_json({"error": "bad_request", "detail": str(exc)}, status=400)
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        if parsed.path != "/api/v1/sensors/simulate":
+        if parsed.path not in ("/api/v1/sensors/simulate", "/api/v1/sensors/scenario"):
             self.send_json({"error": "not_found"}, status=404)
             return
 
         try:
             request = self.read_json_body()
+            if parsed.path == "/api/v1/sensors/scenario":
+                self.send_json(simulate_sensor_timeseries(request))
+                return
             self.send_json(simulate_sensor_snapshot(request))
         except ValueError as exc:
             self.send_json({"error": "bad_request", "detail": str(exc)}, status=400)

@@ -102,9 +102,10 @@ def draw_history_plot(history_df: pd.DataFrame, metric: MetricName, title: str):
 
     for drain_id, group in history_df.groupby("drain_id"):
         group = group.sort_values("time_step")
+        y_values = pd.to_numeric(group[metric], errors="coerce")
         ax.plot(
             group["elapsed_minutes"],
-            group[metric],
+            y_values,
             color=DRAIN_COLORS.get(str(drain_id), "#175cd3"),
             linewidth=2.2,
             marker="o",

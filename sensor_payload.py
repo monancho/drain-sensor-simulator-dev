@@ -20,6 +20,15 @@ SENSOR_MEASUREMENT_FIELDS = (
     "pipe_flow_speed",
     "pipe_flow_rate",
 )
+QUALITY_FLAG_ORDER = (
+    "mock",
+    "noisy",
+    "missing",
+    "stale",
+    "spike",
+    "stuck",
+    "delayed",
+)
 SENSOR_DERIVED_FIELDS = (
     "surface_recession",
     "upstream_pipe_flow",
@@ -54,6 +63,21 @@ def float_value(state: dict[str, float | str], field: str) -> float:
     return round(float(state.get(field, 0.0)), 4)
 
 
+def ordered_quality_flags(flags: list[str] | tuple[str, ...] | set[str]) -> list[str]:
+    """Return quality flags in a stable API order."""
+
+    flag_set = set(flags) or {"mock"}
+    ordered = [flag for flag in QUALITY_FLAG_ORDER if flag in flag_set]
+    ordered.extend(sorted(flag_set.difference(QUALITY_FLAG_ORDER)))
+    return ordered
+
+
+def quality_label(flags: list[str] | tuple[str, ...] | set[str]) -> str:
+    """Return a compact string label for quality flags."""
+
+    return "+".join(ordered_quality_flags(flags))
+
+
 def build_mock_sensor_reading(
     drain_id: str,
     state: dict[str, float | str],
@@ -72,6 +96,10 @@ def build_mock_sensor_reading(
         field: float_value(state, field)
         for field in SENSOR_DERIVED_FIELDS
     }
+    measurement_quality = {
+        field: ["mock"]
+        for field in SENSOR_MEASUREMENT_FIELDS
+    }
 
     return {
         "sensor_id": f"SIM-{drain_id}",
@@ -80,6 +108,8 @@ def build_mock_sensor_reading(
         "time_step": int(time_step),
         "elapsed_minutes": float(elapsed_minutes),
         "quality": "mock",
+        "quality_flags": ["mock"],
+        "measurement_quality": measurement_quality,
         "status": str(state.get("sensor_status", "정상 배수")),
         "blockage": {
             "location": str(state.get("blockage_location", "없음")),
@@ -142,6 +172,14 @@ def build_mock_sensor_records(payload: dict[str, Any]) -> list[dict[str, Any]]:
         measurements = reading["measurements"]
         derived = reading["derived"]
         blockage = reading["blockage"]
+        quality_flags = ordered_quality_flags(reading.get("quality_flags", ["mock"]))
+        measurement_quality = reading.get("measurement_quality", {})
+        field_quality = {
+            f"{field}_quality": quality_label(
+                measurement_quality.get(field, quality_flags)
+            )
+            for field in SENSOR_MEASUREMENT_FIELDS
+        }
         records.append(
             {
                 "sensor_id": reading["sensor_id"],
@@ -149,16 +187,61 @@ def build_mock_sensor_records(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 "observed_at": reading["observed_at"],
                 "time_step": reading["time_step"],
                 "elapsed_minutes": reading["elapsed_minutes"],
+                "quality": reading.get("quality", quality_label(quality_flags)),
+                "quality_flags": quality_label(quality_flags),
                 "status": reading["status"],
                 "blockage_location": blockage["location"],
                 "blockage_severity": blockage["severity"],
                 "surface_blockage": blockage["surface"],
                 "internal_blockage": blockage["internal"],
                 **measurements,
+                **field_quality,
                 **derived,
             }
         )
     return records
+
+
+def build_mock_sensor_timeseries_payload(
+    snapshots: list[dict[str, Any]],
+    *,
+    scenario: dict[str, Any],
+    generated_at: str,
+) -> dict[str, Any]:
+    """Build a reusable timeseries payload from snapshot payloads."""
+
+    records: list[dict[str, Any]] = []
+    for snapshot_index, snapshot in enumerate(snapshots):
+        for record in build_mock_sensor_records(snapshot):
+            records.append(
+                {
+                    "scenario_id": scenario["id"],
+                    "snapshot_index": snapshot_index,
+                    **record,
+                }
+            )
+
+    first_snapshot = snapshots[0] if snapshots else {}
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "source": "drain-sensor-simulator",
+        "generated_at": generated_at,
+        "scenario": scenario,
+        "network": first_snapshot.get(
+            "network",
+            {
+                "nodes": [*DRAIN_IDS, "OUTFALL"],
+                "topology": [
+                    {"from": upstream, "to": downstream}
+                    for upstream, downstream in NETWORK_TOPOLOGY
+                ],
+            },
+        ),
+        "units": NORMALIZED_UNITS,
+        "snapshots": snapshots,
+        "records": records,
+    }
 
 
 def dumps_mock_sensor_payload(payload: dict[str, Any]) -> str:

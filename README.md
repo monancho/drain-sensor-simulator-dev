@@ -1,17 +1,8 @@
 # Drain Sensor Simulator
 
-`drain-sensor-simulator`는 실제 수위·유속 센서가 아직 없는 상황에서, 강우량과 배수구 막힘 위치에 따라 가상의 센서값을 생성하고 2D로 시각화하는 Streamlit 기반 MVP입니다.
+`drain-sensor-simulator`는 실제 수위·유속 센서가 아직 없는 단계에서 쓰는 Streamlit 기반 가상 배수구 센서 시뮬레이터입니다.
 
-## 핵심 목적
-
-이 프로젝트는 다음이 아닙니다.
-
-- XGBoost 학습기 아님
-- YOLO 실행기 아님
-- SWMM/PySWMM 수리해석 모델 아님
-- 실제 침수 예측기 아님
-
-현재 목적은 다음입니다.
+강우량, 배수구별 막힘 위치, 막힘 정도를 바꾸면 다음 값을 mock sensor payload로 만들고 2D Canvas로 시각화합니다.
 
 ```text
 강우량
@@ -24,29 +15,46 @@
 + 관로 유속
 + 관로 유량
 ↓
-드라마틱 2D Canvas 시각화
+Streamlit dashboard
++ 2D Canvas visual metaphor
++ mock sensor JSON/JSONL/API
 ```
 
-## 막힘 구분
+## 범위
 
-| 구분 | 의미 |
-|---|---|
-| 상부 막힘 | 배수구 위 그레이팅/도로면에 쓰레기가 쌓여 물이 지하로 내려가지 못하는 상태 |
-| 내부 막힘 | 물은 배수구 안으로 들어가지만 내부 관로에서 정체되는 상태 |
-| 복합 막힘 | 상부와 내부 문제가 동시에 있는 상태 |
+이 프로젝트는 다음이 아닙니다.
 
-## 실행 방법
+- XGBoost 학습기 아님
+- YOLO 실행기 아님
+- SWMM/PySWMM 수리해석 모델 아님
+- 실제 센서 API 연동 아님
+- CSV 학습 데이터 생성기 아님
+- 실제 침수 예측기 아님
+
+현재 목표는 실제 센서가 없어도 데모, UI/UX, API 계약, 센서값 흐름을 검증할 수 있는 mock sensor simulator입니다.
+
+## 빠른 시작
 
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-목업 센서 API를 따로 실행하려면:
+개발/검증 환경은 다음 명령을 사용합니다.
 
 ```bash
-python api.py
-curl "http://127.0.0.1:8765/api/v1/sensors/snapshot?rainfall=1&steps=12&drain_b_location=surface&drain_b_severity=1"
+pip install -r requirements-dev.txt
+pytest -q
+ruff check .
+```
+
+Makefile을 쓰는 경우:
+
+```bash
+make install-dev
+make run
+make test
+make lint
 ```
 
 Dev Container를 쓰는 경우:
@@ -54,17 +62,39 @@ Dev Container를 쓰는 경우:
 ```bash
 code .
 # VS Code에서 Reopen in Container
-make run
-```
-
-## 개발 명령
-
-```bash
 make install-dev
-make test
-make lint
 make run
 ```
+
+## Streamlit 데모 흐름
+
+1. 왼쪽 사이드바에서 `강우량`, `파이프 용량`, `DRAIN_A/B/C` 막힘 위치와 정도를 조절합니다.
+2. `시뮬레이션 실행`을 누르면 한 step씩 진행됩니다.
+3. `자동 실행`을 켜면 live dashboard fragment만 주기적으로 갱신됩니다.
+4. 상단 카드에서 현재 센서 패턴을 확인합니다.
+5. `2D Canvas 센서 메타포`에서 도로 물고임, 유입, 관로 흐름, 막힘 위치를 봅니다.
+6. `목업 센서 데이터`에서 snapshot JSON과 flat JSONL records를 내려받을 수 있습니다.
+7. `시나리오 타임라인 목업`에서 여러 step의 timeseries payload를 미리 보고, 센서 현실감 옵션을 켤 수 있습니다.
+
+## 막힘 구분 정책
+
+| 구분 | 센서 패턴 |
+|---|---|
+| 상부 막힘 | 도로 위 물고임 증가 + `inlet_flow` 감소 |
+| 내부 막힘 | `pipe_water_level` 증가 + `pipe_flow_speed` 감소 |
+| 복합 막힘 | 상부/내부 패턴이 동시에 발생 |
+
+중요 해석 정책:
+
+```text
+수위 높음 + 유속 높음 = 배수 진행 중
+수위 높음 + 유속 낮음 = 정체 의심 / 내부 정체 의심
+도로 위 물고임 높음 + 유입량 낮음 = 상부 유입 막힘 의심
+```
+
+`DRAIN_A → DRAIN_B → DRAIN_C → OUTFALL` 단순 주관로를 가정합니다. B/C가 상부 막힘이어도 그 막힘은 로컬 유입구 문제이므로, A에서 이미 관로로 들어간 흐름은 가능한 범위에서 하류로 통과합니다.
+
+Canvas 시각화는 실제 유체역학이 아니라 센서값을 직관적으로 보여주는 visual metaphor입니다.
 
 ## 주요 파일
 
@@ -73,32 +103,66 @@ make run
 | `app.py` | Streamlit UI, 세션 상태, 히스토리 관리 |
 | `simulation.py` | 시간 기반 가상 센서 시뮬레이션 |
 | `sensor_model.py` | 센서 상태 해석 |
-| `visualization.py` | 그래프 및 Canvas payload 생성 |
-| `canvas_renderer.py` | HTML Canvas 기반 드라마틱 물 흐름 렌더링 |
-| `sensor_payload.py` | 목업 센서 payload/records 생성 |
-| `sensor_api_service.py` | API 요청 정규화, 시뮬레이션 snapshot 생성, 외부 payload 검증 |
-| `api.py` | 로컬 목업 센서 HTTP API |
+| `visualization.py` | 표, 그래프, Canvas payload 생성 |
+| `canvas_renderer.py` | HTML Canvas 기반 물 흐름 메타포 렌더링 |
+| `sensor_payload.py` | mock sensor payload/records 생성 |
+| `sensor_api_service.py` | API 요청 정규화, snapshot/timeseries 생성, 센서 현실감 후처리 |
+| `api.py` | 로컬 mock sensor HTTP API |
 | `docs/SENSOR_SIMULATION_POLICY.md` | 시뮬레이션 정책과 한계 |
 
-## 목업 센서 API
+## Mock Sensor API
 
-`api.py`는 실제 센서 API가 아니라, 향후 실제 API 연결을 염두에 둔 로컬 계약 서버입니다.
+`api.py`는 실제 센서 API가 아니라, 향후 연동을 염두에 둔 로컬 mock 계약 서버입니다.
+
+```bash
+python api.py
+```
+
+기본 주소는 `http://127.0.0.1:8765`입니다.
 
 | Endpoint | 설명 |
 |---|---|
 | `GET /health` | API 상태 확인 |
-| `GET /api/v1/sensors/schema` | schema version, 기본 drain 설정, endpoint 목록 |
+| `GET /api/v1/sensors/schema` | schema version, 기본 drain 설정, scenario 목록 |
 | `GET /api/v1/sensors/snapshot` | 현재 요청 조건으로 시뮬레이션한 JSON snapshot |
 | `GET /api/v1/sensors/records` | snapshot을 flat records로 변환 |
+| `GET /api/v1/sensors/timeseries` | scenario를 여러 snapshot과 records로 반환 |
 | `POST /api/v1/sensors/simulate` | JSON body로 조건을 받아 snapshot 반환 |
+| `POST /api/v1/sensors/scenario` | JSON body로 scenario 조건을 받아 timeseries 반환 |
 
-Query 예시:
+### API 예시
+
+상태 확인:
+
+```bash
+curl "http://127.0.0.1:8765/health"
+```
+
+단일 snapshot:
 
 ```bash
 curl "http://127.0.0.1:8765/api/v1/sensors/snapshot?rainfall=0.8&pipe_capacity=1.0&steps=10&drain_a_location=none&drain_b_location=surface&drain_b_severity=0.9&drain_c_location=internal&drain_c_severity=0.8"
 ```
 
-POST body 예시:
+flat records:
+
+```bash
+curl "http://127.0.0.1:8765/api/v1/sensors/records?rainfall=1&steps=12&drain_b_location=surface&drain_b_severity=1"
+```
+
+scenario timeseries:
+
+```bash
+curl "http://127.0.0.1:8765/api/v1/sensors/timeseries?scenario=rain_stops&steps=30"
+```
+
+센서 현실감 옵션이 포함된 timeseries:
+
+```bash
+curl "http://127.0.0.1:8765/api/v1/sensors/timeseries?scenario=surface_blockage&steps=12&noise=true&noise_scale=0.03&seed=42"
+```
+
+POST snapshot body:
 
 ```json
 {
@@ -113,18 +177,111 @@ POST body 예시:
 }
 ```
 
-## 향후 통합
+POST scenario body:
 
-현재의 `blockage_location`, `blockage_severity`는 나중에 YOLO 결과로 대체할 수 있습니다.
-
-```text
-YOLO 결과
-→ 정상 / 더러움 / 막힘
-→ surface_blockage, internal_blockage 추정
-
-실제 센서 API
-→ surface_water_level, pipe_water_level, pipe_flow_speed 대체
-
-XGBoost
-→ YOLO 결과 + 센서값으로 최종 위험도 판단
+```json
+{
+  "scenario": "network_passthrough",
+  "steps": 18,
+  "step_minutes": 1,
+  "realism": {
+    "noise": true,
+    "noise_scale": 0.03,
+    "missing": false,
+    "stale": false,
+    "spike": false,
+    "stuck": false,
+    "delay": false,
+    "seed": 42
+  }
+}
 ```
+
+## 기본 시나리오
+
+| Scenario | 설명 |
+|---|---|
+| `light_rain` | 막힘 없는 약한 비 기준 패턴 |
+| `heavy_rain` | 강우가 점진적으로 강해지는 패턴 |
+| `rain_stops` | 비가 그친 뒤 도로 물고임이 서서히 줄어드는 패턴 |
+| `surface_blockage` | B 배수구 상부 유입 막힘이 진행되는 패턴 |
+| `internal_stagnation` | C 관로 내부 정체가 진행되는 패턴 |
+| `complex_worsening` | 상부/내부 복합 막힘이 악화되는 패턴 |
+| `network_passthrough` | B/C 상부가 막혀도 A 관로 흐름은 통과하는 패턴 |
+
+## 센서 현실감 옵션
+
+기본 payload는 안정적인 deterministic mock입니다. API request에 `realism` 옵션을 추가하면 실제 센서에서 흔히 생기는 품질 문제를 measurement 값에만 섞을 수 있습니다.
+
+| 옵션 | 의미 |
+|---|---|
+| `noise` | 작은 측정 노이즈 |
+| `missing` | 일부 측정값을 `null`로 처리 |
+| `stale` | 이전 측정값이 반복되는 상태 |
+| `spike` | 순간 튐값 |
+| `stuck` | 특정 센서/필드가 고착되는 상태 |
+| `delay` | 지정 step 이전 값으로 지연 응답 |
+| `seed` | 재현 가능한 mock 생성을 위한 난수 seed |
+
+품질 정보는 reading의 `quality`, `quality_flags`, `measurement_quality`와 flat record의 `*_quality` 필드에 기록됩니다.
+
+예시:
+
+```json
+{
+  "scenario": "surface_blockage",
+  "steps": 12,
+  "realism": {
+    "noise": true,
+    "noise_scale": 0.03,
+    "missing": true,
+    "missing_rate": 0.05,
+    "stale": true,
+    "stale_rate": 0.05,
+    "spike": true,
+    "spike_rate": 0.03,
+    "stuck": true,
+    "stuck_drain_id": "DRAIN_C",
+    "stuck_field": "pipe_flow_speed",
+    "delay": true,
+    "delay_steps": 1,
+    "seed": 42
+  }
+}
+```
+
+## 검증 명령
+
+```bash
+pytest -q
+ruff check .
+python -m py_compile app.py simulation.py sensor_model.py visualization.py canvas_renderer.py sensor_payload.py sensor_api_service.py api.py
+```
+
+Streamlit과 API smoke test:
+
+```bash
+streamlit run app.py
+python api.py
+curl "http://127.0.0.1:8765/health"
+curl "http://127.0.0.1:8765/api/v1/sensors/timeseries?scenario=network_passthrough&steps=5"
+```
+
+## GitHub 업로드 전 체크
+
+```bash
+git status --short --untracked-files=all
+git branch --show-current
+git remote -v
+```
+
+원격 저장소 URL을 받은 뒤에는 다음 순서로 업로드할 수 있습니다.
+
+```bash
+git add .
+git commit -m "Prepare drain sensor simulator demo"
+git remote add origin <GitHub repo URL>
+git push -u origin main
+```
+
+이미 `origin`이 있으면 `git remote set-url origin <GitHub repo URL>`을 사용합니다.
