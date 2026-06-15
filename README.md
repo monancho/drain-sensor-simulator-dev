@@ -147,6 +147,7 @@ python api.py
 | `GET /api/v1/sensors/schema` | schema version, 기본 drain 설정, scenario 목록 |
 | `GET /api/v1/sensors/snapshot` | 현재 요청 조건으로 시뮬레이션한 JSON snapshot |
 | `GET /api/v1/sensors/records` | snapshot을 flat records로 변환 |
+| `GET /api/v1/sensors/{a,b,c}/latest` | 특정 배수구의 최신 flat record만 반환 |
 | `GET /api/v1/sensors/timeseries` | scenario를 여러 snapshot과 records로 반환 |
 | `POST /api/v1/sensors/simulate` | JSON body로 조건을 받아 snapshot 반환 |
 | `POST /api/v1/sensors/scenario` | JSON body로 scenario 조건을 받아 timeseries 반환 |
@@ -169,6 +170,12 @@ flat records:
 
 ```bash
 curl "http://127.0.0.1:8765/api/v1/sensors/records?rainfall=1&steps=12&drain_b_location=surface&drain_b_severity=1"
+```
+
+특정 배수구 최신값:
+
+```bash
+curl "http://127.0.0.1:8765/api/v1/sensors/b/latest?rainfall=0.8&steps=10&drain_b_location=surface&drain_b_severity=0.8"
 ```
 
 scenario timeseries:

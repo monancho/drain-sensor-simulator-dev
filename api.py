@@ -23,6 +23,15 @@ from sensor_api_service import (
 )
 from simulation import DRAIN_IDS
 
+SENSOR_PATH_ALIASES = {
+    "a": "DRAIN_A",
+    "b": "DRAIN_B",
+    "c": "DRAIN_C",
+    "drain_a": "DRAIN_A",
+    "drain_b": "DRAIN_B",
+    "drain_c": "DRAIN_C",
+}
+
 
 def first_query_value(query: dict[str, list[str]], key: str) -> str | None:
     """Return the first value for a parsed query key."""
@@ -65,6 +74,44 @@ def request_from_query(query: dict[str, list[str]]) -> dict[str, Any]:
         request["drains"] = drains
 
     return request
+
+
+def drain_id_from_path(path: str) -> str | None:
+    """Return a drain id for /api/v1/sensors/{a,b,c}/latest paths."""
+
+    prefix = "/api/v1/sensors/"
+    if not path.startswith(prefix):
+        return None
+
+    parts = [part for part in path[len(prefix):].split("/") if part]
+    if len(parts) == 1 or (len(parts) == 2 and parts[1].lower() == "latest"):
+        raw_drain_id = parts[0]
+    else:
+        return None
+
+    return SENSOR_PATH_ALIASES.get(raw_drain_id.strip().lower())
+
+
+def latest_sensor_payload(drain_id: str, request: dict[str, Any]) -> dict[str, Any]:
+    """Build a compact latest-value response for one drain."""
+
+    if "scenario" in request:
+        raise ValueError(
+            "scenario is for timeseries endpoints; use latest with snapshot query params"
+        )
+
+    records = simulate_sensor_records(request)
+    for record in records:
+        if record.get("drain_id") == drain_id:
+            return {
+                "schema_version": SCHEMA_VERSION,
+                "source": "drain-sensor-simulator",
+                "mode": "snapshot_latest",
+                "drain_id": drain_id,
+                "latest": record,
+            }
+
+    raise ValueError(f"No record found for drain: {drain_id}")
 
 
 class SensorAPIHandler(BaseHTTPRequestHandler):
@@ -120,6 +167,13 @@ class SensorAPIHandler(BaseHTTPRequestHandler):
 
             if parsed.path == "/api/v1/sensors/timeseries":
                 self.send_json(simulate_sensor_timeseries(request_from_query(query)))
+                return
+
+            drain_id = drain_id_from_path(parsed.path)
+            if drain_id is not None:
+                self.send_json(
+                    latest_sensor_payload(drain_id, request_from_query(query))
+                )
                 return
 
             self.send_json({"error": "not_found"}, status=404)

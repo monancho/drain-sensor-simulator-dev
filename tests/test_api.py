@@ -1,6 +1,7 @@
 import json
 import threading
 from http.server import ThreadingHTTPServer
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from api import SensorAPIHandler
@@ -98,6 +99,56 @@ def test_sensor_api_timeseries_and_post_scenario_endpoints():
         assert len(timeseries["records"]) == 15
         assert scenario["scenario"]["id"] == "rain_stops"
         assert len(scenario["snapshots"]) == 6
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_sensor_api_latest_sensor_endpoint():
+    server, base_url = run_test_server()
+    try:
+        latest_b = get_json(
+            f"{base_url}/api/v1/sensors/b/latest"
+            "?rainfall=0.8&steps=8&drain_b_location=surface&drain_b_severity=0.9"
+        )
+        latest_c = get_json(
+            f"{base_url}/api/v1/sensors/c/latest"
+            "?rainfall=0.8&steps=8&drain_c_location=internal&drain_c_severity=0.9"
+        )
+        latest_drain_b = get_json(
+            f"{base_url}/api/v1/sensors/drain_b"
+            "?rainfall=0.8&steps=8&drain_b_location=internal&drain_b_severity=0.9"
+        )
+
+        assert latest_b["schema_version"] == SCHEMA_VERSION
+        assert latest_b["mode"] == "snapshot_latest"
+        assert latest_b["drain_id"] == "DRAIN_B"
+        assert latest_b["latest"]["drain_id"] == "DRAIN_B"
+        assert latest_b["latest"]["blockage_location"] == "상부"
+        assert latest_b["latest"]["surface_water_level"] > 0.0
+        assert latest_c["mode"] == "snapshot_latest"
+        assert latest_c["latest"]["drain_id"] == "DRAIN_C"
+        assert latest_c["latest"]["blockage_location"] == "내부"
+        assert latest_drain_b["latest"]["blockage_location"] == "내부"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_sensor_api_latest_rejects_scenario_query():
+    server, base_url = run_test_server()
+    try:
+        try:
+            get_json(
+                f"{base_url}/api/v1/sensors/c/latest"
+                "?scenario=internal_stagnation&steps=8"
+            )
+        except HTTPError as exc:
+            assert exc.code == 400
+            error = json.loads(exc.read().decode("utf-8"))
+            assert "scenario is for timeseries endpoints" in error["detail"]
+        else:
+            raise AssertionError("latest endpoint should reject scenario queries")
     finally:
         server.shutdown()
         server.server_close()
