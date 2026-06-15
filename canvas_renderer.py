@@ -15,8 +15,8 @@ def render_canvas(payload: dict, *, height: int = 560) -> str:
     canvas_id = "drainCanvas-main"
 
     template = """
-<div style="width:100%; border:1px solid #d8e0ea; border-radius:8px; overflow:hidden; background:#f7fbff; min-height:__CANVAS_HEIGHT__px;">
-  <canvas id="__CANVAS_ID__" width="1040" height="__CANVAS_HEIGHT__" style="width:100%; height:__CANVAS_HEIGHT__px; display:block;"></canvas>
+<div style="width:100%; border:1px solid #d8e0ea; border-radius:8px; overflow-x:auto; overflow-y:hidden; background:#f7fbff; min-height:__CANVAS_HEIGHT__px;">
+  <canvas id="__CANVAS_ID__" width="1040" height="__CANVAS_HEIGHT__" style="width:100%; min-width:960px; max-width:none; height:__CANVAS_HEIGHT__px; display:block;"></canvas>
 </div>
 <script>
 (() => {
@@ -70,6 +70,42 @@ function drawRoundedRect(x, y, w, h, r, fill, stroke) {
   }
 }
 
+function drawBlockageMaterial(x, y, w, h, severity, variant) {
+  const bounded = clamp01(severity);
+  const isSurface = variant === "surface";
+  const fill = isSurface ? "rgba(217, 119, 6, 0.68)" : "rgba(180, 83, 9, 0.64)";
+  const stroke = isSurface ? "#b45309" : "#92400e";
+  const hatch = isSurface ? "rgba(255, 251, 235, 0.80)" : "rgba(255, 247, 237, 0.72)";
+  drawRoundedRect(x, y, w, h, 5, fill, stroke);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.clip();
+  ctx.strokeStyle = hatch;
+  ctx.lineWidth = 1.8;
+  for (let i = -2; i < 8; i++) {
+    const sx = x + i * 16;
+    ctx.beginPath();
+    ctx.moveTo(sx, y + h + 2);
+    ctx.lineTo(sx + 18, y - 2);
+    ctx.stroke();
+  }
+
+  const count = Math.max(2, Math.floor(2 + bounded * 5));
+  for (let i = 0; i < count; i++) {
+    const px = x + 10 + ((i * 19) % Math.max(12, w - 20));
+    const py = y + h / 2 + (((i * 7) % 9) - 4);
+    ctx.fillStyle = isSurface
+      ? (i % 2 === 0 ? "rgba(101, 163, 13, 0.72)" : "rgba(120, 53, 15, 0.64)")
+      : (i % 2 === 0 ? "rgba(120, 53, 15, 0.58)" : "rgba(68, 64, 60, 0.46)");
+    ctx.beginPath();
+    ctx.ellipse(px, py, 5 + (i % 2) * 2, 2.5 + (i % 3), -0.45, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 function palette(drain) {
   return STATUS[drain.status_tone || "good"] || STATUS.good;
 }
@@ -108,7 +144,7 @@ function drawBackground() {
   ctx.fillStyle = "#1d2939";
   ctx.font = "bold 20px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
   ctx.textAlign = "left";
-  ctx.fillText("2D 배수 네트워크 · 상부/내부 막힘 분리 시각화", 44, 42);
+  ctx.fillText("2D 배수 네트워크 · 센서값 기반 흐름 메타포", 44, 42);
 
   ctx.font = "13px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
   ctx.fillStyle = "#667085";
@@ -197,7 +233,7 @@ function drawPipe(from, to, index) {
   ctx.closePath();
   ctx.fill();
 
-  if (segmentOutflow > 0.05) {
+  if (segmentOutflow > 0.14) {
     ctx.fillStyle = "rgba(52, 64, 84, 0.78)";
     ctx.font = "11px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
     ctx.textAlign = "center";
@@ -209,58 +245,88 @@ function drawInternalBlockage(drain, to) {
   if (!drain.internal_blocked) return;
   const severity = clamp01(drain.internal_blockage);
   const x = lerp(drain.x, to.x, 0.34);
-  const h = 18 + severity * 26;
-  const color = severity > 0.7 ? "#b42318" : "#dc6803";
+  const h = 8 + severity * 5;
+  const w = 30 + severity * 18;
 
   ctx.strokeStyle = "rgba(14, 165, 233, 0.35)";
-  ctx.lineWidth = 22;
+  ctx.lineWidth = 16;
   ctx.lineCap = "round";
   ctx.beginPath();
   ctx.moveTo(Math.max(drain.x + 28, x - 92), 430);
   ctx.lineTo(x - 18, 430);
   ctx.stroke();
 
-  drawRoundedRect(x - 18, 430 - h / 2, 36, h, 5, color, "#7a271a");
-  ctx.strokeStyle = "rgba(255,255,255,0.62)";
-  ctx.lineWidth = 2;
-  for (let i = -10; i <= 10; i += 10) {
-    ctx.beginPath();
-    ctx.moveTo(x + i, 430 - h / 2 + 4);
-    ctx.lineTo(x + i - 8, 430 + h / 2 - 4);
-    ctx.stroke();
-  }
-  ctx.fillStyle = "#ffffff";
-  ctx.font = "bold 10px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText("내부", x, 434);
+  drawBlockageMaterial(x - w / 2, 430 - h / 2, w, h, severity, "internal");
+}
 
-  ctx.fillStyle = "#912018";
-  ctx.font = "bold 11px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-  ctx.fillText("관로 정체", x, 404);
+function drawInternalRestrictionInShaft(drain) {
+  if (!drain.internal_blocked) return;
+  const x = drain.x;
+  const y = drain.y;
+  const severity = clamp01(drain.internal_blockage);
+  const restrictionH = 10 + severity * 24;
+  const top = y + 142 - restrictionH;
+
+  drawBlockageMaterial(x - 27, top, 54, restrictionH, severity, "internal");
 }
 
 function drawSurfacePuddle(drain) {
-  const radius = drain.puddle_radius || 0;
+  const radius = Math.min(86, drain.puddle_radius || 0);
   if (radius <= 4) return;
 
   const x = drain.x;
   const y = 332;
   const grad = ctx.createRadialGradient(x, y, 8, x, y, Math.max(20, radius));
-  grad.addColorStop(0, "rgba(56, 189, 248, 0.50)");
-  grad.addColorStop(0.65, "rgba(125, 211, 252, 0.26)");
+  grad.addColorStop(0, "rgba(56, 189, 248, 0.42)");
+  grad.addColorStop(0.65, "rgba(125, 211, 252, 0.22)");
   grad.addColorStop(1, "rgba(186, 230, 253, 0.02)");
   ctx.fillStyle = grad;
   ctx.beginPath();
-  ctx.ellipse(x, y, radius * 1.45, radius * 0.38, 0, 0, Math.PI * 2);
+  ctx.ellipse(x, y, radius * 1.25, radius * 0.34, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  if ((drain.overflow_intensity || 0) > 0.1) {
-    ctx.strokeStyle = "rgba(220, 38, 38, 0.50)";
-    ctx.lineWidth = 2;
+  if ((drain.overflow_intensity || 0) > 0.35) {
+    ctx.strokeStyle = "rgba(2, 132, 199, 0.22)";
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.ellipse(x, y, radius * 1.58, radius * 0.48, 0, 0, Math.PI * 2);
+    ctx.ellipse(x, y, radius * 1.32, radius * 0.40, 0, 0, Math.PI * 2);
     ctx.stroke();
   }
+}
+
+function drawSurfaceSpill(from, to, index) {
+  const spill = clamp01(from.surface_spill_out || 0);
+  if (spill <= 0.01) return;
+  const y = 332 + index * 10;
+  const start = from.x + 64;
+  const end = to.x - 64;
+
+  ctx.save();
+  ctx.setLineDash([12, 8]);
+  ctx.strokeStyle = "rgba(2, 132, 199, 0.46)";
+  ctx.lineWidth = 2 + spill * 6;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(start, y);
+  ctx.lineTo(end, y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = "rgba(2, 132, 199, 0.82)";
+  ctx.beginPath();
+  ctx.moveTo(end + 10, y);
+  ctx.lineTo(end - 7, y - 8);
+  ctx.lineTo(end - 7, y + 8);
+  ctx.closePath();
+  ctx.fill();
+
+  if (spill > 0.08) {
+    ctx.fillStyle = "#075985";
+    ctx.font = "bold 10px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(`도로 유출 ${spill.toFixed(2)}`, (start + end) / 2, y - 10);
+  }
+  ctx.restore();
 }
 
 function drawSurfaceBlockage(drain) {
@@ -268,30 +334,13 @@ function drawSurfaceBlockage(drain) {
   const x = drain.x;
   const severity = clamp01(drain.surface_blockage);
 
-  drawRoundedRect(x - 58, 247, 116, 26, 7, "rgba(255, 250, 235, 0.97)", "#dc6803");
+  drawRoundedRect(x - 54, 247, 108, 24, 7, "rgba(255, 250, 235, 0.96)", "#dc6803");
   ctx.fillStyle = "#b54708";
   ctx.font = "bold 11px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
   ctx.textAlign = "center";
-  ctx.fillText(`상부 유입 차단 ${severity.toFixed(2)}`, x, 264);
+  ctx.fillText(`상부 막힘 ${severity.toFixed(2)}`, x, 263);
 
-  ctx.strokeStyle = "rgba(180, 35, 24, 0.72)";
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(x - 28, 238);
-  ctx.lineTo(x + 28, 238);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(x - 12, 232);
-  ctx.lineTo(x + 12, 244);
-  ctx.moveTo(x + 12, 232);
-  ctx.lineTo(x - 12, 244);
-  ctx.stroke();
-
-  for (let i = 0; i < 7; i++) {
-    const dx = -42 + i * 14;
-    const color = i % 2 === 0 ? "#854d0e" : "#475467";
-    drawRoundedRect(x + dx, 272 + (i % 3) * 3, 12, 8, 2, color, null);
-  }
+  drawBlockageMaterial(x - 45, 266, 90, 16, severity, "surface");
 }
 
 function drawPassthroughAtDrain(drain) {
@@ -318,11 +367,12 @@ function drawPassthroughAtDrain(drain) {
   ctx.closePath();
   ctx.fill();
 
-  drawRoundedRect(x - 54, 444, 108, 20, 6, "rgba(219, 234, 254, 0.96)", "#2e90fa");
-  ctx.fillStyle = "#175cd3";
-  ctx.font = "bold 10px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText(`하부 통과 ${upstream.toFixed(2)}`, x, 458);
+  if (upstream > 0.16) {
+    ctx.fillStyle = "#175cd3";
+    ctx.font = "bold 10px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(`하부 통과 ${upstream.toFixed(2)}`, x, 458);
+  }
   ctx.restore();
 }
 
@@ -340,6 +390,7 @@ function drawDrain(drain) {
   const waveOffset = Math.sin(frame * 0.07 + x * 0.01) * 3;
   ctx.fillStyle = "rgba(14, 165, 233, 0.80)";
   drawRoundedRect(x - 32, y + 134 - fillH + waveOffset, 64, fillH, 8, "rgba(14, 165, 233, 0.80)", null);
+  drawInternalRestrictionInShaft(drain);
 
   // grate
   drawRoundedRect(x - 50, y - 8, 100, 38, 8, "#475467", "#101828");
@@ -366,15 +417,6 @@ function drawDrain(drain) {
     ctx.fill();
   }
 
-  // debris
-  const debrisCount = drain.debris_count || 0;
-  for (let i = 0; i < debrisCount; i++) {
-    const dx = ((i * 23) % 78) - 39;
-    const dy = ((i * 19) % 34) - 11;
-    ctx.fillStyle = i % 2 === 0 ? "#854d0e" : "#667085";
-    drawRoundedRect(x + dx, y + dy, 10 + (i % 3) * 3, 7 + (i % 2) * 3, 2, ctx.fillStyle, null);
-  }
-
   // status label
   const selected = palette(drain);
   ctx.fillStyle = selected.text;
@@ -382,14 +424,14 @@ function drawDrain(drain) {
   ctx.textAlign = "center";
   ctx.fillText(drain.id, x, drain.surface_blocked ? y - 50 : y - 28);
 
-  // stagnation pulse
+  // stagnation emphasis
   if ((drain.stagnation_intensity || 0) > 0.12) {
-    const pulse = 8 + Math.sin(frame * 0.08) * 5;
-    ctx.strokeStyle = "rgba(220, 38, 38, 0.55)";
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(x, y + 18, 70 + pulse, 0, Math.PI * 2);
-    ctx.stroke();
+    ctx.save();
+    ctx.setLineDash([8, 6]);
+    ctx.strokeStyle = "rgba(220, 38, 38, 0.24)";
+    ctx.lineWidth = 2;
+    drawRoundedRect(x - 45, y + 20, 90, 128, 10, null, "rgba(220, 38, 38, 0.24)");
+    ctx.restore();
   }
 }
 
@@ -423,45 +465,54 @@ function drawOutfall() {
 }
 
 function drawLegend() {
-  drawRoundedRect(752, 28, 252, 154, 8, "rgba(255,255,255,0.90)", "#d0d5dd");
+  const lx = 706;
+  drawRoundedRect(lx, 28, 226, 154, 8, "rgba(255,255,255,0.90)", "#d0d5dd");
   ctx.textAlign = "left";
   ctx.fillStyle = "#344054";
   ctx.font = "bold 13px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-  ctx.fillText("표현 기준", 770, 54);
+  ctx.fillText("표현 기준", lx + 18, 54);
   ctx.font = "12px system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 
   ctx.fillStyle = "rgba(56, 189, 248, 0.55)";
   ctx.beginPath();
-  ctx.ellipse(778, 76, 16, 6, 0, 0, Math.PI * 2);
+  ctx.ellipse(lx + 26, 76, 16, 6, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = "#344054";
-  ctx.fillText("도로 물웅덩이 = surface water", 802, 80);
+  ctx.fillText("도로 물웅덩이 = surface", lx + 50, 80);
 
-  drawRoundedRect(766, 92, 24, 12, 4, "#fef0c7", "#dc6803");
+  drawRoundedRect(lx + 14, 92, 24, 12, 4, "#fef0c7", "#dc6803");
   ctx.fillStyle = "#344054";
-  ctx.fillText("상부 막힘 = 유입구 위 차단", 802, 103);
+  ctx.fillText("상부 막힘 = 유입구 차단", lx + 50, 103);
 
-  drawRoundedRect(766, 116, 24, 14, 4, "#b42318", "#7a271a");
+  drawRoundedRect(lx + 14, 116, 24, 14, 4, "rgba(180, 83, 9, 0.88)", "#92400e");
+  ctx.strokeStyle = "rgba(255, 247, 237, 0.82)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(lx + 19, 128);
+  ctx.lineTo(lx + 32, 118);
+  ctx.moveTo(lx + 30, 128);
+  ctx.lineTo(lx + 38, 122);
+  ctx.stroke();
   ctx.fillStyle = "#344054";
-  ctx.fillText("내부 막힘 = 관로 속 정체", 802, 128);
+  ctx.fillText("내부 막힘 = 관로 제한", lx + 50, 128);
 
   ctx.strokeStyle = "rgba(21, 112, 239, 0.88)";
   ctx.lineWidth = 4;
   ctx.setLineDash([8, 5]);
   ctx.beginPath();
-  ctx.moveTo(766, 148);
-  ctx.lineTo(790, 148);
+  ctx.moveTo(lx + 14, 148);
+  ctx.lineTo(lx + 38, 148);
   ctx.stroke();
   ctx.setLineDash([]);
   ctx.fillStyle = "#344054";
-  ctx.fillText("하부 통과 = upstream pipe flow", 802, 152);
+  ctx.fillText("하부 통과 = 관로 흐름", lx + 50, 152);
 
   ctx.fillStyle = "rgba(64, 169, 255, 0.92)";
   ctx.beginPath();
-  ctx.arc(778, 168, 5, 0, Math.PI * 2);
+  ctx.arc(lx + 26, 168, 5, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = "#344054";
-  ctx.fillText("입자 속도/밀도 = flow speed/rate", 802, 172);
+  ctx.fillText("입자 = 유속/유량", lx + 50, 172);
 }
 
 function animate() {
@@ -470,6 +521,10 @@ function animate() {
   ctx.clearRect(0, 0, W, H);
   drawBackground();
   drawRain();
+
+  for (let i = 0; i < drains.length - 1; i++) {
+    drawSurfaceSpill(drains[i], drains[i + 1], i);
+  }
 
   for (let i = 0; i < drains.length; i++) {
     const from = drains[i];

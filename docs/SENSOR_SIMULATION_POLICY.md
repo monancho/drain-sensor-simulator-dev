@@ -63,12 +63,15 @@ SWMM/PySWMM은 향후 고도화 후보로 남긴다.
 
 ## 3.1. 단순 관로 네트워크 가정
 
-현재 MVP는 `DRAIN_A → DRAIN_B → DRAIN_C → OUTFALL` 순서의 단순 주관로를 가정한다.
+현재 MVP는 `DRAIN_A → DRAIN_B → DRAIN_C → OUTFALL` 순서의 단순 주관로와 `DRAIN_A → DRAIN_B → DRAIN_C` 방향의 도로면 spill을 가정한다.
 
 - 각 배수구의 도로 위 물고임과 유입량은 해당 지점의 상부 막힘에 의해 결정된다.
-- A에서 관로로 들어간 물은 B, C 지점 아래 관로를 지나 하류로 이동할 수 있다.
+- A에서 관로로 들어간 물은 pipe edge flow로 B, C 지점 아래 관로를 지나 하류로 이동할 수 있다.
 - B나 C가 상부 막힘이어도, 그 막힘은 로컬 유입구를 막는 것이지 주관로 자체를 막는 것은 아니다.
 - 내부 막힘은 해당 구간의 관로 통과 흐름과 유속을 낮추고, 관로 수위를 높이는 방식으로 표현한다.
+- C처럼 하류 쪽 내부 막힘이 강하면 단순 `downstream_backwater` 값으로 B/A 관로 수위도 함께 상승할 수 있다.
+- 관로 수위가 충분히 높고 강우가 계속되면 `pipe_surcharge_to_surface`로 도로 위 물고임이 추가될 수 있다.
+- 도로 위 물고임이 커지면 `surface_spill_out`/`surface_spill_in`으로 인접 하류 노드에 일부 물이 전달될 수 있다.
 - 이 네트워크 전달도 실제 수리해석이 아니라 센서 패턴을 직관적으로 보여주기 위한 단순화다.
 
 ## 4. 핵심 센서값
@@ -78,6 +81,10 @@ SWMM/PySWMM은 향후 고도화 후보로 남긴다.
 | `surface_water_level` | 도로 위 물고임 정도 |
 | `inlet_flow` | 배수구 안으로 들어가는 물의 양 |
 | `surface_recession` | 비가 약해지거나 그친 뒤 도로 물고임이 자연 감소하는 양 |
+| `surface_spill_in` | 인접 상류 도로면에서 흘러온 물 |
+| `surface_spill_out` | 인접 하류 도로면으로 흘러간 물 |
+| `pipe_surcharge_to_surface` | 강우 중 관로가 차올라 도로면으로 올라오는 역류성 물고임 |
+| `downstream_backwater` | 하류 내부 병목이 상류 관로 수위에 주는 단순 역류 영향 |
 | `pipe_water_level` | 내부 관로 수위 |
 | `pipe_flow_speed` | 내부 관로 유속 |
 | `pipe_flow_rate` | 내부 관로 유량 |

@@ -135,9 +135,10 @@ def test_rain_stops_scenario_reduces_surface_water_after_peak():
         for record in drain_b_records
     ]
 
-    assert max(surface_levels) > 0.80
+    assert max(surface_levels) > 0.70
     assert surface_levels[-1] < max(surface_levels)
     assert float(drain_b_records[-1]["surface_recession"]) > 0.0
+    assert max(float(record["surface_spill_out"]) for record in drain_b_records) > 0.0
 
 
 def test_timeseries_surface_and_internal_patterns_remain_distinct():

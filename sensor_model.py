@@ -18,6 +18,7 @@ def interpret_sensor_status(state: dict[str, float | str]) -> str:
     pipe_flow_speed = float(state.get("pipe_flow_speed", 0.0))
     surface_blockage = float(state.get("surface_blockage", 0.0))
     internal_blockage = float(state.get("internal_blockage", 0.0))
+    downstream_backwater = float(state.get("downstream_backwater", 0.0))
     pipe_water_delta = float(state.get("pipe_water_delta", 0.0))
     surface_water_delta = float(state.get("surface_water_delta", 0.0))
 
@@ -37,6 +38,9 @@ def interpret_sensor_status(state: dict[str, float | str]) -> str:
         internal_blockage >= 0.75 and pipe_water_delta > 0
     ):
         return "내부 정체 의심"
+
+    if downstream_backwater >= 0.45 and pipe_water_level >= 0.65 and pipe_flow_speed <= 0.55:
+        return "하류 병목 영향"
 
     if pipe_water_level >= 0.70 and pipe_flow_speed >= 0.55:
         return "배수 진행 중"

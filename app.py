@@ -237,7 +237,7 @@ def status_tone(status: str) -> str:
 
     if "복합" in status:
         return "danger"
-    if "상부" in status or "내부" in status:
+    if "상부" in status or "내부" in status or "병목" in status:
         return "warning"
     if "물고임" in status or "흐름" in status:
         return "watch"
@@ -297,6 +297,10 @@ def render_sensor_card_html(drain_id: str, state: dict[str, float | str]) -> str
     pipe_segment_outflow = float(state["pipe_segment_outflow"])
     pipe_water_level = float(state["pipe_water_level"])
     pipe_flow_speed = float(state["pipe_flow_speed"])
+    downstream_backwater = float(state.get("downstream_backwater", 0.0))
+    pipe_surcharge_to_surface = float(state.get("pipe_surcharge_to_surface", 0.0))
+    surface_spill_in = float(state.get("surface_spill_in", 0.0))
+    surface_spill_out = float(state.get("surface_spill_out", 0.0))
     surface_blockage = float(state["surface_blockage"])
     internal_blockage = float(state["internal_blockage"])
     blockage_location = str(state["blockage_location"])
@@ -326,7 +330,9 @@ def render_sensor_card_html(drain_id: str, state: dict[str, float | str]) -> str
         {metric_block("관로 유속", pipe_flow_speed, "flow")}
       </div>
       <div class="sensor-card__footer">
-        상류 유입 {upstream_pipe_flow:.2f} · 하부 통과 {pipe_segment_outflow:.2f}
+        상류 유입 {upstream_pipe_flow:.2f} · 하부 통과 {pipe_segment_outflow:.2f}<br>
+        하류 병목 {downstream_backwater:.2f} · 역류 노면 {pipe_surcharge_to_surface:.2f}<br>
+        도로 유입/유출 {surface_spill_in:.2f}/{surface_spill_out:.2f}
         {passthrough_hint}
       </div>
     </div>
@@ -403,7 +409,11 @@ def append_history(
                 "surface_water_level": state["surface_water_level"],
                 "inlet_flow": state["inlet_flow"],
                 "surface_recession": state["surface_recession"],
+                "surface_spill_in": state["surface_spill_in"],
+                "surface_spill_out": state["surface_spill_out"],
+                "pipe_surcharge_to_surface": state["pipe_surcharge_to_surface"],
                 "upstream_pipe_flow": state["upstream_pipe_flow"],
+                "downstream_backwater": state["downstream_backwater"],
                 "pipe_segment_outflow": state["pipe_segment_outflow"],
                 "pipe_water_level": state["pipe_water_level"],
                 "pipe_flow_speed": state["pipe_flow_speed"],
@@ -598,7 +608,7 @@ def timeline_tone(statuses: pd.Series) -> str:
     joined = " ".join(str(status) for status in statuses)
     if "복합" in joined:
         return "danger"
-    if "상부" in joined or "내부" in joined or "정체" in joined:
+    if "상부" in joined or "내부" in joined or "정체" in joined or "병목" in joined:
         return "warning"
     if "물고임" in joined or "흐름" in joined or "배수 진행" in joined:
         return "watch"

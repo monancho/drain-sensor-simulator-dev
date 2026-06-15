@@ -31,7 +31,11 @@ QUALITY_FLAG_ORDER = (
 )
 SENSOR_DERIVED_FIELDS = (
     "surface_recession",
+    "surface_spill_in",
+    "surface_spill_out",
+    "pipe_surcharge_to_surface",
     "upstream_pipe_flow",
+    "downstream_backwater",
     "pipe_segment_outflow",
     "surface_water_delta",
     "pipe_water_delta",
@@ -46,7 +50,11 @@ NORMALIZED_UNITS = {
     for field in (
         *SENSOR_MEASUREMENT_FIELDS,
         "surface_recession",
+        "surface_spill_in",
+        "surface_spill_out",
+        "pipe_surcharge_to_surface",
         "upstream_pipe_flow",
+        "downstream_backwater",
         "pipe_segment_outflow",
         "surface_blockage",
         "internal_blockage",

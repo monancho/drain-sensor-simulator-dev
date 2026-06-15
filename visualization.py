@@ -77,7 +77,14 @@ def build_current_table(states: dict[str, dict[str, float | str]]) -> pd.DataFra
                 "도로 수위": round(float(state.get("surface_water_level", 0.0)), 3),
                 "유입량": round(float(state.get("inlet_flow", 0.0)), 3),
                 "노면 자연 감소": round(float(state.get("surface_recession", 0.0)), 3),
+                "도로 유입": round(float(state.get("surface_spill_in", 0.0)), 3),
+                "도로 유출": round(float(state.get("surface_spill_out", 0.0)), 3),
+                "관로 역류 노면 유입": round(
+                    float(state.get("pipe_surcharge_to_surface", 0.0)),
+                    3,
+                ),
                 "상류 관로 유입": round(float(state.get("upstream_pipe_flow", 0.0)), 3),
+                "하류 역류 영향": round(float(state.get("downstream_backwater", 0.0)), 3),
                 "관로 통과 유량": round(float(state.get("pipe_segment_outflow", 0.0)), 3),
                 "관로 수위": round(float(state.get("pipe_water_level", 0.0)), 3),
                 "관로 유속": round(float(state.get("pipe_flow_speed", 0.0)), 3),
@@ -144,6 +151,10 @@ def build_visual_payload(
         pipe_flow_rate = float(state.get("pipe_flow_rate", 0.0))
         upstream_pipe_flow = float(state.get("upstream_pipe_flow", 0.0))
         pipe_segment_outflow = float(state.get("pipe_segment_outflow", 0.0))
+        downstream_backwater = float(state.get("downstream_backwater", 0.0))
+        pipe_surcharge_to_surface = float(state.get("pipe_surcharge_to_surface", 0.0))
+        surface_spill_in = float(state.get("surface_spill_in", 0.0))
+        surface_spill_out = float(state.get("surface_spill_out", 0.0))
         surface_water_level = float(state.get("surface_water_level", 0.0))
         pipe_water_level = float(state.get("pipe_water_level", 0.0))
         surface_blockage = float(state.get("surface_blockage", 0.0))
@@ -164,7 +175,11 @@ def build_visual_payload(
                 "surface_water_level": surface_water_level,
                 "inlet_flow": float(state.get("inlet_flow", 0.0)),
                 "upstream_pipe_flow": upstream_pipe_flow,
+                "downstream_backwater": downstream_backwater,
+                "surface_spill_in": surface_spill_in,
+                "surface_spill_out": surface_spill_out,
                 "pipe_segment_outflow": pipe_segment_outflow,
+                "pipe_surcharge_to_surface": pipe_surcharge_to_surface,
                 "pipe_water_level": pipe_water_level,
                 "pipe_flow_speed": pipe_flow_speed,
                 "pipe_flow_rate": pipe_flow_rate,
@@ -175,7 +190,9 @@ def build_visual_payload(
                 "pipe_thickness": 5 + pipe_flow_speed * 12,
                 "particle_speed": 0.35 + pipe_flow_speed * 2.8,
                 "particle_count": int(3 + pipe_flow_rate * 18),
-                "debris_count": int(blockage_severity * 16),
+                "surface_blockage_intensity": surface_blockage,
+                "internal_blockage_intensity": internal_blockage,
+                "blockage_intensity": blockage_severity,
                 "stagnation_intensity": min(1.0, max(0.0, stagnation_score) * 3.2),
                 "overflow_intensity": min(1.0, max(0.0, surface_water_level - 0.80) / 0.20),
                 "surface_blocked": surface_blockage >= 0.25,
@@ -190,7 +207,7 @@ def build_visual_payload(
 
     return {
         "rainfall": float(rainfall),
-        "rainParticleCount": int(float(rainfall) * 150),
+        "rainParticleCount": int(float(rainfall) * 110),
         "timeStep": int(time_step),
         "elapsedMinutes": float(elapsed_minutes),
         "drains": drains,
@@ -203,7 +220,7 @@ def resolve_status_tone(status: str) -> str:
 
     if "복합" in status:
         return "danger"
-    if "상부" in status or "내부" in status:
+    if "상부" in status or "내부" in status or "병목" in status:
         return "warning"
     if "물고임" in status or "흐름" in status:
         return "watch"
