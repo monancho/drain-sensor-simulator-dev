@@ -1,0 +1,6 @@
+{
+  "python.analysis.typeCheckingMode": "basic",
+  "editor.formatOnSave": true,
+  "ruff.organizeImports": true,
+  "files.encoding": "utf8"
+}
