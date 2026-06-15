@@ -142,6 +142,8 @@ def build_visual_payload(
         state = states[drain_id]
         pipe_flow_speed = float(state.get("pipe_flow_speed", 0.0))
         pipe_flow_rate = float(state.get("pipe_flow_rate", 0.0))
+        upstream_pipe_flow = float(state.get("upstream_pipe_flow", 0.0))
+        pipe_segment_outflow = float(state.get("pipe_segment_outflow", 0.0))
         surface_water_level = float(state.get("surface_water_level", 0.0))
         pipe_water_level = float(state.get("pipe_water_level", 0.0))
         surface_blockage = float(state.get("surface_blockage", 0.0))
@@ -161,6 +163,8 @@ def build_visual_payload(
                 "internal_blockage": internal_blockage,
                 "surface_water_level": surface_water_level,
                 "inlet_flow": float(state.get("inlet_flow", 0.0)),
+                "upstream_pipe_flow": upstream_pipe_flow,
+                "pipe_segment_outflow": pipe_segment_outflow,
                 "pipe_water_level": pipe_water_level,
                 "pipe_flow_speed": pipe_flow_speed,
                 "pipe_flow_rate": pipe_flow_rate,
@@ -176,12 +180,17 @@ def build_visual_payload(
                 "overflow_intensity": min(1.0, max(0.0, surface_water_level - 0.80) / 0.20),
                 "surface_blocked": surface_blockage >= 0.25,
                 "internal_blocked": internal_blockage >= 0.25,
+                "passthrough_visible": (
+                    surface_blockage >= 0.25
+                    and internal_blockage < 0.25
+                    and upstream_pipe_flow > 0.02
+                ),
             }
         )
 
     return {
         "rainfall": float(rainfall),
-        "rainParticleCount": int(20 + float(rainfall) * 130),
+        "rainParticleCount": int(float(rainfall) * 150),
         "timeStep": int(time_step),
         "elapsedMinutes": float(elapsed_minutes),
         "drains": drains,

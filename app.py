@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 from datetime import datetime
 
 import pandas as pd
@@ -70,8 +71,8 @@ def inject_theme_styles() -> None:
             margin-top: 0.15rem;
         }
         .sensor-card {
-            padding: 0.9rem;
-            min-height: 188px;
+            padding: 0.95rem;
+            min-height: 246px;
         }
         .sensor-card--good {
             border-top: 4px solid #12b76a;
@@ -125,6 +126,15 @@ def inject_theme_styles() -> None:
             grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 0.7rem 0.85rem;
         }
+        .sensor-card__metric {
+            min-width: 0;
+        }
+        .sensor-card__metric-head {
+            align-items: baseline;
+            display: flex;
+            justify-content: space-between;
+            gap: 0.5rem;
+        }
         .sensor-card__value {
             color: #101828;
             font-size: 1.05rem;
@@ -154,14 +164,66 @@ def inject_theme_styles() -> None:
         .sensor-card__bar--flow span {
             background: #7a5af8;
         }
+        .sensor-card__footer {
+            border-top: 1px solid #eef2f6;
+            color: #475467;
+            font-size: 0.78rem;
+            line-height: 1.45;
+            margin-top: 0.85rem;
+            padding-top: 0.65rem;
+        }
+        .sensor-card__hint {
+            color: #175cd3;
+            font-weight: 700;
+            margin-top: 0.15rem;
+        }
         .metric-note {
             color: #667085;
             font-size: 0.86rem;
             margin: -0.35rem 0 0.9rem;
         }
+        .timeline-strip {
+            align-items: stretch;
+            display: flex;
+            gap: 3px;
+            height: 28px;
+            margin: 0.4rem 0 0.7rem;
+        }
+        .timeline-segment {
+            border-radius: 3px;
+            min-width: 6px;
+        }
+        .timeline-segment--good {
+            background: #12b76a;
+        }
+        .timeline-segment--watch {
+            background: #f79009;
+        }
+        .timeline-segment--warning {
+            background: #f04438;
+        }
+        .timeline-segment--danger {
+            background: #b42318;
+        }
+        .timeline-summary {
+            color: #475467;
+            display: grid;
+            font-size: 0.82rem;
+            gap: 0.45rem;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            margin-bottom: 0.75rem;
+        }
+        .timeline-summary strong {
+            color: #101828;
+            display: block;
+            font-size: 0.95rem;
+        }
         @media (max-width: 900px) {
             .demo-strip {
                 grid-template-columns: 1fr;
+            }
+            .timeline-summary {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
             }
         }
         </style>
@@ -199,6 +261,76 @@ def progress_value(value: float) -> float:
     """Return a bounded value for Streamlit progress bars."""
 
     return max(0.0, min(1.0, value))
+
+
+def percent_width(value: float) -> str:
+    """Return a CSS percentage width for normalized values."""
+
+    return f"{progress_value(value) * 100:.1f}%"
+
+
+def metric_block(label: str, value: float, bar_class: str) -> str:
+    """Render one metric cell for the custom sensor cards."""
+
+    safe_label = html.escape(label)
+    return f"""
+      <div class="sensor-card__metric">
+        <div class="sensor-card__metric-head">
+          <div class="sensor-card__label">{safe_label}</div>
+          <div class="sensor-card__value">{value:.2f}</div>
+        </div>
+        <div class="sensor-card__bar sensor-card__bar--{bar_class}">
+          <span style="width:{percent_width(value)}"></span>
+        </div>
+      </div>
+    """
+
+
+def render_sensor_card_html(drain_id: str, state: dict[str, float | str]) -> str:
+    """Render one compact sensor card as HTML."""
+
+    status = str(state["sensor_status"])
+    tone = status_tone(status)
+    surface_water_level = float(state["surface_water_level"])
+    inlet_flow = float(state["inlet_flow"])
+    upstream_pipe_flow = float(state["upstream_pipe_flow"])
+    pipe_segment_outflow = float(state["pipe_segment_outflow"])
+    pipe_water_level = float(state["pipe_water_level"])
+    pipe_flow_speed = float(state["pipe_flow_speed"])
+    surface_blockage = float(state["surface_blockage"])
+    internal_blockage = float(state["internal_blockage"])
+    blockage_location = str(state["blockage_location"])
+    passthrough_hint = ""
+    if surface_blockage >= 0.25 and internal_blockage < 0.25 and upstream_pipe_flow > 0.02:
+        passthrough_hint = (
+            '<div class="sensor-card__hint">상부는 막혔지만 하부 관로 흐름은 통과 중</div>'
+        )
+
+    return f"""
+    <div class="sensor-card sensor-card--{tone}">
+      <div class="sensor-card__top">
+        <div>
+          <div class="sensor-card__id">{html.escape(drain_id)}</div>
+          <div class="sensor-card__label">
+            막힘 {html.escape(blockage_location)}
+            · 상부 {surface_blockage:.2f}
+            · 내부 {internal_blockage:.2f}
+          </div>
+        </div>
+        <div class="sensor-badge sensor-badge--{tone}">{html.escape(status)}</div>
+      </div>
+      <div class="sensor-card__grid">
+        {metric_block("도로 수위", surface_water_level, "surface")}
+        {metric_block("유입량", inlet_flow, "inlet")}
+        {metric_block("관로 수위", pipe_water_level, "pipe")}
+        {metric_block("관로 유속", pipe_flow_speed, "flow")}
+      </div>
+      <div class="sensor-card__footer">
+        상류 유입 {upstream_pipe_flow:.2f} · 하부 통과 {pipe_segment_outflow:.2f}
+        {passthrough_hint}
+      </div>
+    </div>
+    """
 
 
 def render_demo_strip(*, rainfall: float, pipe_capacity: float, time_step: int) -> None:
@@ -334,36 +466,10 @@ def render_summary_cards(states: dict[str, dict[str, float | str]]) -> None:
 
     for col, drain_id in zip(cols, DRAIN_IDS, strict=True):
         state = states[drain_id]
-        status = str(state["sensor_status"])
-        surface_water_level = float(state["surface_water_level"])
-        inlet_flow = float(state["inlet_flow"])
-        upstream_pipe_flow = float(state["upstream_pipe_flow"])
-        pipe_segment_outflow = float(state["pipe_segment_outflow"])
-        pipe_water_level = float(state["pipe_water_level"])
-        pipe_flow_speed = float(state["pipe_flow_speed"])
-        with col, st.container(border=True):
-            top_cols = st.columns([0.46, 0.54], vertical_alignment="center")
-            top_cols[0].markdown(f"**{drain_id}**")
-            top_cols[1].badge(status, color=badge_color(status))
-
-            metric_cols = st.columns(2)
-            metric_cols[0].metric("도로 수위", f"{surface_water_level:.2f}")
-            metric_cols[1].metric("유입량", f"{inlet_flow:.2f}")
-
-            st.progress(
-                progress_value(surface_water_level),
-                text=f"도로 수위 {surface_water_level:.2f}",
-            )
-            st.progress(progress_value(inlet_flow), text=f"유입량 {inlet_flow:.2f}")
-            st.progress(
-                progress_value(pipe_water_level),
-                text=f"관로 수위 {pipe_water_level:.2f}",
-            )
-            st.progress(
-                progress_value(pipe_flow_speed),
-                text=f"관로 유속 {pipe_flow_speed:.2f}",
-            )
-            st.caption(f"상류 {upstream_pipe_flow:.2f} · 통과 {pipe_segment_outflow:.2f}")
+        col.markdown(
+            render_sensor_card_html(drain_id, state),
+            unsafe_allow_html=True,
+        )
 
 
 def render_live_dashboard(
@@ -468,6 +574,78 @@ def render_mock_sensor_panel(*, rainfall: float, pipe_capacity: float) -> None:
         st.json(payload, expanded=2)
 
 
+def numeric_max(values: pd.Series) -> float:
+    """Return a numeric max, treating all-null series as 0."""
+
+    value = pd.to_numeric(values, errors="coerce").max()
+    if pd.isna(value):
+        return 0.0
+    return float(value)
+
+
+def numeric_min(values: pd.Series) -> float:
+    """Return a numeric min, treating all-null series as 0."""
+
+    value = pd.to_numeric(values, errors="coerce").min()
+    if pd.isna(value):
+        return 0.0
+    return float(value)
+
+
+def timeline_tone(statuses: pd.Series) -> str:
+    """Return the strongest UI tone for a group of statuses."""
+
+    joined = " ".join(str(status) for status in statuses)
+    if "복합" in joined:
+        return "danger"
+    if "상부" in joined or "내부" in joined or "정체" in joined:
+        return "warning"
+    if "물고임" in joined or "흐름" in joined or "배수 진행" in joined:
+        return "watch"
+    return "good"
+
+
+def render_timeseries_timeline(records_df: pd.DataFrame) -> None:
+    """Render a compact visual summary for scenario records."""
+
+    if records_df.empty:
+        return
+
+    segments = []
+    for _, group in records_df.groupby("snapshot_index", sort=True):
+        tone = timeline_tone(group["status"])
+        step = int(numeric_max(group["time_step"]))
+        surface = numeric_max(group["surface_water_level"])
+        pipe_level = numeric_max(group["pipe_water_level"])
+        pipe_speed = numeric_min(group["pipe_flow_speed"])
+        title = html.escape(
+            f"step {step} | 도로 {surface:.2f} | 관로 {pipe_level:.2f} | "
+            f"최소 유속 {pipe_speed:.2f}"
+        )
+        segments.append(
+            f'<div class="timeline-segment timeline-segment--{tone}" title="{title}"></div>'
+        )
+
+    peak_surface = numeric_max(records_df["surface_water_level"])
+    peak_pipe = numeric_max(records_df["pipe_water_level"])
+    min_speed = numeric_min(records_df["pipe_flow_speed"])
+    final_status = html.escape(str(records_df.iloc[-1]["status"]))
+    timeline_html = "".join(segments)
+
+    st.markdown(
+        f"""
+        <div class="timeline-strip">{timeline_html}</div>
+        <div class="timeline-summary">
+          <div>최대 도로 수위<strong>{peak_surface:.2f}</strong></div>
+          <div>최대 관로 수위<strong>{peak_pipe:.2f}</strong></div>
+          <div>최소 관로 유속<strong>{min_speed:.2f}</strong></div>
+          <div>마지막 상태<strong>{final_status}</strong></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_timeseries_preview_panel() -> None:
     """Render a scenario-based mock sensor timeseries preview."""
 
@@ -558,6 +736,7 @@ def render_timeseries_preview_panel() -> None:
     )
 
     if not records_df.empty:
+        render_timeseries_timeline(records_df)
         chart_cols = st.columns(2)
         with chart_cols[0]:
             st.pyplot(draw_history_plot(records_df, "surface_water_level", "도로 위 물고임 변화"))
