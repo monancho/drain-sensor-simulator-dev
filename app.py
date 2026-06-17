@@ -8,6 +8,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
+from api import LIVE_PROFILES, build_live_latest_payload
 from canvas_renderer import render_canvas
 from sensor_api_service import SCENARIO_DEFINITIONS, simulate_sensor_timeseries
 from sensor_model import attach_sensor_status
@@ -31,6 +32,13 @@ DEFAULT_SEVERITIES = {
     "DRAIN_C": 0.85,
 }
 STEP_MINUTES = 1
+LIVE_PROFILE_LABELS = {
+    "normal_drain": "정상 배수",
+    "storm_pulse": "강우 펄스",
+    "surface_debris_live": "상부 막힘 변동",
+    "internal_stagnation_live": "내부 정체 변동",
+    "mixed_unstable": "복합 불안정",
+}
 
 
 def inject_theme_styles() -> None:
@@ -774,6 +782,146 @@ def render_timeseries_preview_panel() -> None:
         st.json(timeseries, expanded=1)
 
 
+def render_live_latest_result(
+    *,
+    drain_id: str,
+    profile: str,
+    seed: str,
+    interval_sec: float,
+    fixed_tick: bool,
+    tick: int,
+) -> None:
+    """Render one live latest reading from the polling mock generator."""
+
+    request: dict[str, str | float | int] = {
+        "mode": "live",
+        "profile": profile,
+        "seed": seed,
+        "interval_sec": interval_sec,
+    }
+    if fixed_tick:
+        request["tick"] = tick
+
+    payload = build_live_latest_payload(drain_id, request)
+    live = payload["live"]
+    latest = payload["latest"]
+    tone = status_tone(str(latest["status"]))
+
+    st.caption(
+        f"{drain_id} · {LIVE_PROFILE_LABELS.get(profile, profile)} · "
+        f"tick {live['tick']} · next poll {live['next_poll_after_ms']} ms"
+    )
+    metric_cols = st.columns(5)
+    metric_cols[0].metric("도로 수위", f"{float(latest['surface_water_level']):.2f}")
+    metric_cols[1].metric("유입량", f"{float(latest['inlet_flow']):.2f}")
+    metric_cols[2].metric("관로 수위", f"{float(latest['pipe_water_level']):.2f}")
+    metric_cols[3].metric("관로 유속", f"{float(latest['pipe_flow_speed']):.2f}")
+    metric_cols[4].badge(str(latest["status"]), color=badge_color(str(latest["status"])))
+
+    st.progress(
+        progress_value(float(latest["surface_water_level"])),
+        text=f"도로 물고임 · {latest['blockage_location']} · 상태 tone {tone}",
+    )
+    st.dataframe(pd.DataFrame([latest]), width="stretch", hide_index=True)
+
+    with st.expander("Live latest JSON"):
+        st.json(payload, expanded=1)
+
+
+def render_live_latest_polling_panel() -> None:
+    """Render a lightweight polling test panel for live latest mock values."""
+
+    st.subheader("Live Latest Polling 테스트")
+    st.caption(
+        "별도 API 서버 호출 없이 같은 live latest mock 생성기를 사용합니다. "
+        "외부 클라이언트는 같은 조건으로 latest endpoint를 2초 안팎마다 polling하면 됩니다."
+    )
+
+    control_cols = st.columns([0.20, 0.28, 0.18, 0.18, 0.16])
+    drain_id = control_cols[0].selectbox(
+        "대상 배수구",
+        options=list(DRAIN_IDS),
+        index=1,
+        key="live_latest_drain_id",
+    )
+    profile_options = sorted(LIVE_PROFILES)
+    profile = control_cols[1].selectbox(
+        "live profile",
+        options=profile_options,
+        index=profile_options.index("storm_pulse"),
+        format_func=lambda value: LIVE_PROFILE_LABELS.get(value, value),
+        key="live_latest_profile",
+    )
+    interval_sec = control_cols[2].slider(
+        "poll interval",
+        0.5,
+        10.0,
+        2.0,
+        0.5,
+        key="live_latest_interval_sec",
+    )
+    seed = control_cols[3].text_input(
+        "seed",
+        value="demo",
+        key="live_latest_seed",
+    )
+    auto_poll = control_cols[4].checkbox(
+        "자동 polling",
+        value=False,
+        key="live_latest_auto_poll",
+    )
+
+    tick_cols = st.columns([0.24, 0.24, 0.52])
+    fixed_tick = tick_cols[0].checkbox(
+        "tick 고정",
+        value=False,
+        key="live_latest_fixed_tick",
+    )
+    tick = tick_cols[1].number_input(
+        "tick",
+        min_value=0,
+        max_value=1_000_000,
+        value=10,
+        step=1,
+        disabled=not fixed_tick,
+        key="live_latest_tick",
+    )
+    path_drain = drain_id.replace("DRAIN_", "").lower()
+    tick_query = f"&tick={int(tick)}" if fixed_tick else ""
+    endpoint = (
+        f"/api/v1/sensors/{path_drain}/latest?mode=live"
+        f"&profile={profile}&interval_sec={interval_sec:g}&seed={seed}{tick_query}"
+    )
+    tick_cols[2].code(f'curl "http://127.0.0.1:8765{endpoint}"', language="bash")
+
+    run_every = interval_sec if auto_poll and not fixed_tick else None
+    if auto_poll and fixed_tick:
+        st.info("tick 고정 상태에서는 값 재현 확인용으로 동작하므로 자동 polling을 멈춥니다.")
+
+    if hasattr(st, "fragment"):
+        fragment = st.fragment(run_every=run_every)(render_live_latest_result)
+        fragment(
+            drain_id=drain_id,
+            profile=profile,
+            seed=seed,
+            interval_sec=interval_sec,
+            fixed_tick=fixed_tick,
+            tick=int(tick),
+        )
+        return
+
+    if auto_poll and not fixed_tick:
+        st.warning("현재 Streamlit 버전은 패널 단위 자동 polling을 지원하지 않습니다.")
+    render_live_latest_result(
+        drain_id=drain_id,
+        profile=profile,
+        seed=seed,
+        interval_sec=interval_sec,
+        fixed_tick=fixed_tick,
+        tick=int(tick),
+    )
+
+
 def render_live_dashboard_fragment(
     *,
     rainfall: float,
@@ -877,6 +1025,7 @@ def main() -> None:
     render_detail_panels()
     render_mock_sensor_panel(rainfall=rainfall, pipe_capacity=pipe_capacity)
     render_timeseries_preview_panel()
+    render_live_latest_polling_panel()
 
     with st.expander("이 시뮬레이터의 한계"):
         st.markdown(

@@ -75,6 +75,7 @@ make run
 5. `2D Canvas 센서 메타포`에서 도로 물고임, 유입, 관로 흐름, 막힘 위치를 봅니다.
 6. `목업 센서 데이터`에서 snapshot JSON과 flat JSONL records를 내려받을 수 있습니다.
 7. `시나리오 타임라인 목업`에서 여러 step의 timeseries payload를 미리 보고, 센서 현실감 옵션을 켤 수 있습니다.
+8. `Live Latest Polling 테스트`에서 polling 기반 live mock 최신값을 확인할 수 있습니다.
 
 ![Drain Sensor Simulator demo](docs/demo-assets/streamlit-dashboard.png)
 
