@@ -7,7 +7,11 @@ It does not connect to a real sensor backend.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import math
+import time
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -31,6 +35,23 @@ SENSOR_PATH_ALIASES = {
     "drain_b": "DRAIN_B",
     "drain_c": "DRAIN_C",
 }
+LIVE_MODE = "live"
+DEFAULT_LIVE_PROFILE = "storm_pulse"
+DEFAULT_LIVE_INTERVAL_SEC = 2.0
+LIVE_PROFILES = {
+    "normal_drain",
+    "storm_pulse",
+    "surface_debris_live",
+    "internal_stagnation_live",
+    "mixed_unstable",
+}
+LIVE_MEASUREMENT_FIELDS = (
+    "surface_water_level",
+    "inlet_flow",
+    "pipe_water_level",
+    "pipe_flow_speed",
+    "pipe_flow_rate",
+)
 
 
 def first_query_value(query: dict[str, list[str]], key: str) -> str | None:
@@ -52,6 +73,10 @@ def request_from_query(query: dict[str, list[str]]) -> dict[str, Any]:
         "pipe_capacity",
         "steps",
         "step_minutes",
+        "mode",
+        "profile",
+        "tick",
+        "interval_sec",
         *REALISM_QUERY_FIELDS,
     ):
         value = first_query_value(query, field)
@@ -76,6 +101,12 @@ def request_from_query(query: dict[str, list[str]]) -> dict[str, Any]:
     return request
 
 
+def clamp(value: float, low: float, high: float) -> float:
+    """Clamp a float value into an inclusive range."""
+
+    return max(low, min(high, float(value)))
+
+
 def drain_id_from_path(path: str) -> str | None:
     """Return a drain id for /api/v1/sensors/{a,b,c}/latest paths."""
 
@@ -92,6 +123,149 @@ def drain_id_from_path(path: str) -> str | None:
     return SENSOR_PATH_ALIASES.get(raw_drain_id.strip().lower())
 
 
+def stable_seed_int(*parts: object) -> int:
+    """Return a deterministic integer seed from request parts."""
+
+    text = ":".join(str(part) for part in parts)
+    return int(hashlib.sha256(text.encode("utf-8")).hexdigest()[:12], 16)
+
+
+def normalized_wave(value: float) -> float:
+    """Return a smooth 0~1 wave for live mock input generation."""
+
+    return (math.sin(value) + 1.0) / 2.0
+
+
+def parse_live_request(request: dict[str, Any]) -> dict[str, Any]:
+    """Normalize live latest query parameters."""
+
+    profile = str(request.get("profile", DEFAULT_LIVE_PROFILE)).strip().lower()
+    if profile not in LIVE_PROFILES:
+        raise ValueError(f"Unknown live profile: {profile}")
+
+    interval_sec = clamp(
+        float(request.get("interval_sec", DEFAULT_LIVE_INTERVAL_SEC)),
+        0.25,
+        60.0,
+    )
+    seed = str(request.get("seed", "live-demo"))
+    if "tick" in request:
+        tick = max(0, int(float(request["tick"])))
+    else:
+        tick = max(0, int(time.time() / interval_sec))
+
+    return {
+        "profile": profile,
+        "tick": tick,
+        "interval_sec": interval_sec,
+        "seed": seed,
+        "next_poll_after_ms": int(interval_sec * 1000),
+    }
+
+
+def build_live_sensor_request(
+    drain_id: str,
+    live: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a stateless simulation request for one live latest tick."""
+
+    profile = str(live["profile"])
+    tick = int(live["tick"])
+    seed = str(live["seed"])
+    phase_seed = stable_seed_int(profile, seed, drain_id) % 360
+    phase = tick * 0.47 + phase_seed / 57.2958
+    slow_phase = tick * 0.19 + phase_seed / 91.0
+    wave = normalized_wave(phase)
+    slow_wave = normalized_wave(slow_phase)
+    jitter = ((stable_seed_int(profile, seed, tick, drain_id) % 1000) / 1000.0 - 0.5)
+
+    rainfall = 0.35
+    pipe_capacity = 1.0
+    target_location = "none"
+    target_severity = 0.0
+    steps = 8
+
+    if profile == "normal_drain":
+        rainfall = clamp(0.22 + wave * 0.16 + jitter * 0.02, 0.05, 0.45)
+        pipe_capacity = clamp(0.95 + slow_wave * 0.08, 0.85, 1.1)
+        steps = 5 + tick % 4
+
+    elif profile == "storm_pulse":
+        rainfall = clamp(0.48 + wave * 0.47 + jitter * 0.03, 0.25, 1.0)
+        pipe_capacity = clamp(0.88 + slow_wave * 0.16, 0.75, 1.1)
+        steps = 7 + tick % 8
+
+    elif profile == "surface_debris_live":
+        rainfall = clamp(0.62 + wave * 0.25 + jitter * 0.03, 0.35, 1.0)
+        pipe_capacity = clamp(0.92 + normalized_wave(phase + 1.4) * 0.10, 0.8, 1.05)
+        target_location = "surface"
+        target_severity = clamp(0.66 + slow_wave * 0.28 + jitter * 0.03, 0.58, 0.98)
+        steps = 12 + tick % 8
+
+    elif profile == "internal_stagnation_live":
+        rainfall = clamp(0.62 + wave * 0.28 + jitter * 0.03, 0.35, 1.0)
+        pipe_capacity = clamp(0.82 + normalized_wave(phase + 0.8) * 0.14, 0.65, 1.0)
+        target_location = "internal"
+        target_severity = clamp(0.66 + slow_wave * 0.30 + jitter * 0.03, 0.58, 1.0)
+        steps = 12 + tick % 9
+
+    elif profile == "mixed_unstable":
+        rainfall = clamp(0.55 + wave * 0.34 + jitter * 0.04, 0.30, 1.0)
+        pipe_capacity = clamp(0.74 + normalized_wave(phase + 2.1) * 0.22, 0.55, 1.0)
+        target_location = "complex"
+        target_severity = clamp(0.25 + slow_wave * 0.48 + jitter * 0.04, 0.18, 0.82)
+        steps = 10 + tick % 10
+
+    drains = {
+        drain: {"location": "none", "severity": 0.0}
+        for drain in DRAIN_IDS
+    }
+    drains[drain_id] = {
+        "location": target_location,
+        "severity": round(target_severity, 4),
+    }
+
+    return {
+        "rainfall": round(rainfall, 4),
+        "pipe_capacity": round(pipe_capacity, 4),
+        "steps": int(steps),
+        "step_minutes": 1.0,
+        "drains": drains,
+    }
+
+
+def build_live_latest_payload(drain_id: str, request: dict[str, Any]) -> dict[str, Any]:
+    """Return one stateless polling-friendly live latest reading."""
+
+    live = parse_live_request(request)
+    live_request = build_live_sensor_request(drain_id, live)
+    observed_at = (
+        datetime(1970, 1, 1)
+        + timedelta(seconds=int(live["tick"] * live["interval_sec"]))
+    ).isoformat(timespec="seconds")
+    records = simulate_sensor_records(live_request, generated_at=observed_at)
+    latest = next(
+        record
+        for record in records
+        if record.get("drain_id") == drain_id
+    )
+    live["simulation"] = {
+        "rainfall": live_request["rainfall"],
+        "pipe_capacity": live_request["pipe_capacity"],
+        "steps": live_request["steps"],
+        "drain": live_request["drains"][drain_id],
+    }
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "source": "drain-sensor-simulator",
+        "mode": "live_latest",
+        "drain_id": drain_id,
+        "live": live,
+        "latest": latest,
+    }
+
+
 def latest_sensor_payload(drain_id: str, request: dict[str, Any]) -> dict[str, Any]:
     """Build a compact latest-value response for one drain."""
 
@@ -99,6 +273,9 @@ def latest_sensor_payload(drain_id: str, request: dict[str, Any]) -> dict[str, A
         raise ValueError(
             "scenario is for timeseries endpoints; use latest with snapshot query params"
         )
+
+    if str(request.get("mode", "")).strip().lower() == LIVE_MODE:
+        return build_live_latest_payload(drain_id, request)
 
     records = simulate_sensor_records(request)
     for record in records:
@@ -141,9 +318,11 @@ class SensorAPIHandler(BaseHTTPRequestHandler):
                         "schema_version": SCHEMA_VERSION,
                         "default_drains": DEFAULT_API_DRAIN_CONFIGS,
                         "scenarios": available_scenarios(),
+                        "live_profiles": sorted(LIVE_PROFILES),
                         "endpoints": [
                             "GET /api/v1/sensors/snapshot",
                             "GET /api/v1/sensors/records",
+                            "GET /api/v1/sensors/{a,b,c}/latest",
                             "GET /api/v1/sensors/timeseries",
                             "POST /api/v1/sensors/simulate",
                             "POST /api/v1/sensors/scenario",

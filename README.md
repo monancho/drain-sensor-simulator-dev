@@ -178,6 +178,26 @@ curl "http://127.0.0.1:8765/api/v1/sensors/records?rainfall=1&steps=12&drain_b_l
 curl "http://127.0.0.1:8765/api/v1/sensors/b/latest?rainfall=0.8&steps=10&drain_b_location=surface&drain_b_severity=0.8"
 ```
 
+Polling 기반 live mock 최신값:
+
+```bash
+curl "http://127.0.0.1:8765/api/v1/sensors/b/latest?mode=live&profile=storm_pulse"
+```
+
+내부 정체 live profile:
+
+```bash
+curl "http://127.0.0.1:8765/api/v1/sensors/c/latest?mode=live&profile=internal_stagnation_live"
+```
+
+재현 가능한 live tick 테스트:
+
+```bash
+curl "http://127.0.0.1:8765/api/v1/sensors/b/latest?mode=live&profile=surface_debris_live&tick=10&seed=demo"
+```
+
+`mode=live`는 WebSocket/SSE가 아니라 polling용 mock 최신값입니다. 프론트엔드나 백엔드는 응답의 `live.next_poll_after_ms` 값을 기준으로 2초 안팎마다 같은 endpoint를 다시 호출하면 됩니다. `tick`을 생략하면 현재 시간을 `interval_sec`로 나눈 값이 사용되고, `tick`과 `seed`를 넣으면 같은 값을 재현할 수 있습니다.
+
 scenario timeseries:
 
 ```bash

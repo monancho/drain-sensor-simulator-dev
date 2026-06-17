@@ -7,6 +7,21 @@ from urllib.request import Request, urlopen
 from api import SensorAPIHandler
 from sensor_payload import SCHEMA_VERSION
 
+LIVE_PROFILES = (
+    "normal_drain",
+    "storm_pulse",
+    "surface_debris_live",
+    "internal_stagnation_live",
+    "mixed_unstable",
+)
+LIVE_BOUNDED_FIELDS = (
+    "surface_water_level",
+    "inlet_flow",
+    "pipe_water_level",
+    "pipe_flow_speed",
+    "pipe_flow_rate",
+)
+
 
 def run_test_server():
     server = ThreadingHTTPServer(("127.0.0.1", 0), SensorAPIHandler)
@@ -149,6 +164,110 @@ def test_sensor_api_latest_rejects_scenario_query():
             assert "scenario is for timeseries endpoints" in error["detail"]
         else:
             raise AssertionError("latest endpoint should reject scenario queries")
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_sensor_api_live_latest_response_contract_and_reproducibility():
+    server, base_url = run_test_server()
+    try:
+        first = get_json(
+            f"{base_url}/api/v1/sensors/b/latest"
+            "?mode=live&profile=storm_pulse&tick=10&seed=demo"
+        )
+        second = get_json(
+            f"{base_url}/api/v1/sensors/b/latest"
+            "?mode=live&profile=storm_pulse&tick=10&seed=demo"
+        )
+        next_tick = get_json(
+            f"{base_url}/api/v1/sensors/b/latest"
+            "?mode=live&profile=storm_pulse&tick=11&seed=demo"
+        )
+
+        assert first == second
+        assert first["schema_version"] == SCHEMA_VERSION
+        assert first["mode"] == "live_latest"
+        assert first["drain_id"] == "DRAIN_B"
+        assert first["live"]["profile"] == "storm_pulse"
+        assert first["live"]["tick"] == 10
+        assert first["live"]["interval_sec"] == 2.0
+        assert first["live"]["next_poll_after_ms"] == 2000
+        assert first["latest"]["drain_id"] == "DRAIN_B"
+
+        changed_fields = [
+            field
+            for field in LIVE_BOUNDED_FIELDS
+            if first["latest"][field] != next_tick["latest"][field]
+        ]
+        assert changed_fields
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_sensor_api_live_profiles_keep_values_bounded():
+    server, base_url = run_test_server()
+    try:
+        for profile in LIVE_PROFILES:
+            for tick in (0, 3, 10, 21):
+                payload = get_json(
+                    f"{base_url}/api/v1/sensors/c/latest"
+                    f"?mode=live&profile={profile}&tick={tick}&seed=bounded"
+                )
+                latest = payload["latest"]
+
+                assert payload["mode"] == "live_latest"
+                assert payload["live"]["profile"] == profile
+                for field in LIVE_BOUNDED_FIELDS:
+                    assert 0.0 <= float(latest[field]) <= 1.0
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_sensor_api_live_surface_and_internal_profiles_keep_expected_patterns():
+    server, base_url = run_test_server()
+    try:
+        surface = get_json(
+            f"{base_url}/api/v1/sensors/b/latest"
+            "?mode=live&profile=surface_debris_live&tick=10&seed=pattern"
+        )["latest"]
+        internal = get_json(
+            f"{base_url}/api/v1/sensors/b/latest"
+            "?mode=live&profile=internal_stagnation_live&tick=10&seed=pattern"
+        )["latest"]
+        storm = get_json(
+            f"{base_url}/api/v1/sensors/b/latest"
+            "?mode=live&profile=storm_pulse&tick=10&seed=pattern"
+        )["latest"]
+
+        assert surface["blockage_location"] == "상부"
+        assert float(surface["surface_water_level"]) >= 0.45
+        assert float(surface["inlet_flow"]) < float(storm["inlet_flow"])
+        assert "상부" in surface["status"] or "물고임" in surface["status"]
+
+        assert internal["blockage_location"] == "내부"
+        assert float(internal["pipe_water_level"]) >= 0.70
+        assert float(internal["pipe_flow_speed"]) < float(storm["pipe_flow_speed"])
+        assert "내부" in internal["status"] or "정체" in internal["status"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_sensor_api_live_high_level_high_flow_policy():
+    server, base_url = run_test_server()
+    try:
+        payload = get_json(
+            f"{base_url}/api/v1/sensors/c/latest"
+            "?mode=live&profile=mixed_unstable&tick=4&seed=policy"
+        )
+        latest = payload["latest"]
+
+        assert float(latest["pipe_water_level"]) >= 0.70
+        assert float(latest["pipe_flow_speed"]) >= 0.55
+        assert latest["status"] == "배수 진행 중"
     finally:
         server.shutdown()
         server.server_close()
