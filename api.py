@@ -16,6 +16,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from runtime_state import (
+    RuntimeSnapshotError,
+    RuntimeSnapshotInvalid,
+    RuntimeSnapshotNotFound,
+    get_runtime_latest_record,
+    read_runtime_snapshot,
+)
 from sensor_api_service import (
     DEFAULT_API_DRAIN_CONFIGS,
     REALISM_QUERY_FIELDS,
@@ -36,6 +43,7 @@ SENSOR_PATH_ALIASES = {
     "drain_c": "DRAIN_C",
 }
 LIVE_MODE = "live"
+RUNTIME_SOURCE = "runtime"
 DEFAULT_LIVE_PROFILE = "storm_pulse"
 DEFAULT_LIVE_INTERVAL_SEC = 2.0
 LIVE_PROFILES = {
@@ -74,6 +82,7 @@ def request_from_query(query: dict[str, list[str]]) -> dict[str, Any]:
         "steps",
         "step_minutes",
         "mode",
+        "source",
         "profile",
         "tick",
         "interval_sec",
@@ -266,6 +275,39 @@ def build_live_latest_payload(drain_id: str, request: dict[str, Any]) -> dict[st
     }
 
 
+def runtime_metadata_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Return compact runtime metadata for API responses."""
+
+    runtime = snapshot.get("runtime", {})
+    if not isinstance(runtime, dict):
+        runtime = {}
+
+    return {
+        "producer": runtime.get("producer", "streamlit"),
+        "generated_at": runtime.get("generated_at", snapshot.get("generated_at")),
+        "time_step": runtime.get("time_step", snapshot.get("time_step")),
+        "elapsed_minutes": runtime.get(
+            "elapsed_minutes",
+            snapshot.get("elapsed_minutes"),
+        ),
+    }
+
+
+def runtime_latest_payload(drain_id: str) -> dict[str, Any]:
+    """Build a latest-value response from the Streamlit runtime snapshot."""
+
+    snapshot = read_runtime_snapshot()
+    latest = get_runtime_latest_record(drain_id)
+    return {
+        "schema_version": snapshot.get("schema_version", SCHEMA_VERSION),
+        "source": "drain-sensor-simulator",
+        "mode": "runtime_latest",
+        "drain_id": drain_id,
+        "runtime": runtime_metadata_from_snapshot(snapshot),
+        "latest": latest,
+    }
+
+
 def latest_sensor_payload(drain_id: str, request: dict[str, Any]) -> dict[str, Any]:
     """Build a compact latest-value response for one drain."""
 
@@ -273,6 +315,9 @@ def latest_sensor_payload(drain_id: str, request: dict[str, Any]) -> dict[str, A
         raise ValueError(
             "scenario is for timeseries endpoints; use latest with snapshot query params"
         )
+
+    if str(request.get("source", "")).strip().lower() == RUNTIME_SOURCE:
+        return runtime_latest_payload(drain_id)
 
     if str(request.get("mode", "")).strip().lower() == LIVE_MODE:
         return build_live_latest_payload(drain_id, request)
@@ -332,6 +377,10 @@ class SensorAPIHandler(BaseHTTPRequestHandler):
                 return
 
             if parsed.path == "/api/v1/sensors/snapshot":
+                request = request_from_query(query)
+                if str(request.get("source", "")).strip().lower() == RUNTIME_SOURCE:
+                    self.send_json(read_runtime_snapshot())
+                    return
                 self.send_json(simulate_sensor_snapshot(request_from_query(query)))
                 return
 
@@ -356,6 +405,31 @@ class SensorAPIHandler(BaseHTTPRequestHandler):
                 return
 
             self.send_json({"error": "not_found"}, status=404)
+        except RuntimeSnapshotNotFound as exc:
+            self.send_json(
+                {
+                    "error": "runtime_snapshot_not_found",
+                    "detail": str(exc),
+                    "hint": "Run Streamlit and start the simulation first.",
+                },
+                status=404,
+            )
+        except RuntimeSnapshotInvalid as exc:
+            self.send_json(
+                {
+                    "error": "runtime_snapshot_invalid",
+                    "detail": str(exc),
+                },
+                status=500,
+            )
+        except RuntimeSnapshotError as exc:
+            self.send_json(
+                {
+                    "error": "runtime_snapshot_error",
+                    "detail": str(exc),
+                },
+                status=500,
+            )
         except ValueError as exc:
             self.send_json({"error": "bad_request", "detail": str(exc)}, status=400)
 

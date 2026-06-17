@@ -1,8 +1,11 @@
 from app import (
     build_dynamic_blockage_configs,
+    build_runtime_sensor_payload,
     resolve_dynamic_inputs,
     smooth_cycle_value,
 )
+from sensor_model import attach_sensor_status
+from simulation import DRAIN_IDS, initialize_drain_states
 
 
 def test_smooth_cycle_value_is_deterministic_and_bounded():
@@ -126,3 +129,25 @@ def test_resolve_dynamic_inputs_applies_enabled_dynamic_options():
     assert configs["DRAIN_B"][0] == "상부"
     assert configs["DRAIN_B"][1] != 0.55
     assert all(0.0 <= severity <= 1.0 for _, severity in configs.values())
+
+
+def test_build_runtime_sensor_payload_includes_records_and_runtime_metadata():
+    states = {
+        drain_id: attach_sensor_status(initialize_drain_states()[drain_id])
+        for drain_id in DRAIN_IDS
+    }
+
+    payload = build_runtime_sensor_payload(
+        states,
+        rainfall=0.7,
+        pipe_capacity=1.0,
+        time_step=3,
+        generated_at="2026-06-17T00:00:00",
+    )
+
+    assert payload["mode"] == "runtime_snapshot"
+    assert payload["runtime"]["producer"] == "streamlit"
+    assert payload["runtime"]["time_step"] == 3
+    assert payload["rainfall"] == 0.7
+    assert len(payload["records"]) == 3
+    assert {record["drain_id"] for record in payload["records"]} == set(DRAIN_IDS)

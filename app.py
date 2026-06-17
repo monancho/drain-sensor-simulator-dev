@@ -11,9 +11,11 @@ import streamlit as st
 
 from api import LIVE_PROFILES, build_live_latest_payload
 from canvas_renderer import render_canvas
+from runtime_state import get_runtime_snapshot_path, write_runtime_snapshot
 from sensor_api_service import SCENARIO_DEFINITIONS, simulate_sensor_timeseries
 from sensor_model import attach_sensor_status
 from sensor_payload import (
+    SCHEMA_VERSION,
     build_mock_sensor_payload,
     build_mock_sensor_records,
     dumps_mock_sensor_payload,
@@ -145,6 +147,47 @@ def format_blockage_preview(
         f"{drain_id[-1]} {severity:.2f}"
         for drain_id, (_, severity) in blockage_configs.items()
     )
+
+
+def build_runtime_sensor_payload(
+    states: dict[str, dict[str, float | str]],
+    *,
+    rainfall: float,
+    pipe_capacity: float,
+    time_step: int,
+    generated_at: str,
+) -> dict[str, object]:
+    """Build the shared runtime snapshot written by the Streamlit UI."""
+
+    elapsed_minutes = time_step * STEP_MINUTES
+    payload = build_mock_sensor_payload(
+        states,
+        rainfall=rainfall,
+        pipe_capacity=pipe_capacity,
+        time_step=time_step,
+        elapsed_minutes=elapsed_minutes,
+        generated_at=generated_at,
+    )
+    records = build_mock_sensor_records(payload)
+    payload.update(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "mode": "runtime_snapshot",
+            "rainfall": round(float(rainfall), 4),
+            "pipe_capacity": round(float(pipe_capacity), 4),
+            "time_step": int(time_step),
+            "elapsed_minutes": elapsed_minutes,
+            "records": records,
+            "runtime": {
+                "producer": "streamlit",
+                "generated_at": generated_at,
+                "time_step": int(time_step),
+                "elapsed_minutes": elapsed_minutes,
+                "state_file": str(get_runtime_snapshot_path()),
+            },
+        }
+    )
+    return payload
 
 
 def inject_theme_styles() -> None:
@@ -456,7 +499,8 @@ def render_sensor_card_html(drain_id: str, state: dict[str, float | str]) -> str
 def render_demo_strip(
     *,
     rainfall: float,
-    base_rainfall: float,
+    rainfall_min: float,
+    rainfall_max: float,
     rainfall_auto: bool,
     pipe_capacity: float,
     time_step: int,
@@ -466,7 +510,7 @@ def render_demo_strip(
     elapsed_minutes = time_step * STEP_MINUTES
     rainfall_label = "적용 강우 입력" if rainfall_auto else "현재 강우 입력"
     rainfall_detail = (
-        f'<div class="demo-strip__label">수동 기준 {base_rainfall:.2f}</div>'
+        f'<div class="demo-strip__label">자동 범위 {rainfall_min:.2f}-{rainfall_max:.2f}</div>'
         if rainfall_auto
         else ""
     )
@@ -507,6 +551,12 @@ def initialize_session_state() -> None:
 
     if "time_step" not in st.session_state:
         st.session_state.time_step = 0
+
+    if "runtime_snapshot_saved_at" not in st.session_state:
+        st.session_state.runtime_snapshot_saved_at = None
+
+    if "runtime_snapshot_error" not in st.session_state:
+        st.session_state.runtime_snapshot_error = None
 
 
 def append_history(
@@ -558,6 +608,26 @@ def append_history(
         )
 
 
+def persist_runtime_snapshot(*, rainfall: float, pipe_capacity: float) -> None:
+    """Write the current Streamlit sensor state for the mock API runtime source."""
+
+    generated_at = datetime.now().isoformat(timespec="seconds")
+    payload = build_runtime_sensor_payload(
+        st.session_state.drain_states,
+        rainfall=rainfall,
+        pipe_capacity=pipe_capacity,
+        time_step=st.session_state.time_step,
+        generated_at=generated_at,
+    )
+    try:
+        write_runtime_snapshot(payload)
+    except OSError as exc:
+        st.session_state.runtime_snapshot_error = str(exc)
+    else:
+        st.session_state.runtime_snapshot_saved_at = generated_at
+        st.session_state.runtime_snapshot_error = None
+
+
 def simulate_one_step(
     *,
     rainfall: float,
@@ -582,6 +652,7 @@ def simulate_one_step(
 
     st.session_state.drain_states = next_states
     append_history(rainfall=rainfall, pipe_capacity=pipe_capacity, states=next_states)
+    persist_runtime_snapshot(rainfall=rainfall, pipe_capacity=pipe_capacity)
 
 
 def reset_simulation() -> None:
@@ -654,7 +725,8 @@ def render_live_dashboard(
     )
     render_demo_strip(
         rainfall=display_rainfall,
-        base_rainfall=rainfall,
+        rainfall_min=rainfall_min,
+        rainfall_max=rainfall_max,
         rainfall_auto=rainfall_auto,
         pipe_capacity=pipe_capacity,
         time_step=st.session_state.time_step,
@@ -757,6 +829,27 @@ def render_mock_sensor_panel(*, rainfall: float, pipe_capacity: float) -> None:
 
     with st.expander("현재 JSON payload"):
         st.json(payload, expanded=2)
+
+
+def render_runtime_api_status_panel() -> None:
+    """Render the current Streamlit-to-API shared runtime status."""
+
+    st.subheader("API 공유 상태")
+    saved_at = st.session_state.get("runtime_snapshot_saved_at")
+    error = st.session_state.get("runtime_snapshot_error")
+    if error:
+        st.error(f"runtime snapshot 저장 실패: {error}")
+        return
+
+    if saved_at:
+        st.success(f"runtime snapshot 저장 중 · 마지막 저장 {saved_at}")
+    else:
+        st.info("아직 API 공유 snapshot이 없습니다. 시뮬레이션을 1 step 이상 실행하세요.")
+
+    st.caption(
+        "Postman 예시: "
+        "`GET http://127.0.0.1:8765/api/v1/sensors/b/latest?source=runtime`"
+    )
 
 
 def numeric_max(values: pd.Series) -> float:
@@ -1171,7 +1264,48 @@ def main() -> None:
     st.sidebar.title("시뮬레이션 입력")
     st.sidebar.caption("강우량과 배수구 막힘 위치를 조절합니다.")
 
-    rainfall = st.sidebar.slider("강우량", 0.0, 1.0, 0.70, 0.01)
+    st.sidebar.subheader("강우 조건")
+    rainfall_mode = st.sidebar.radio(
+        "강우 모드",
+        ["고정", "자동 변동"],
+        horizontal=True,
+        key="rainfall_mode",
+    )
+    rainfall_auto = rainfall_mode == "자동 변동"
+    if rainfall_auto:
+        rainfall_range_cols = st.sidebar.columns(2)
+        rainfall_min = rainfall_range_cols[0].slider(
+            "최소 강우량",
+            0.0,
+            1.0,
+            0.25,
+            0.01,
+            key="rainfall_auto_min",
+        )
+        rainfall_max = rainfall_range_cols[1].slider(
+            "최대 강우량",
+            0.0,
+            1.0,
+            0.85,
+            0.01,
+            key="rainfall_auto_max",
+        )
+        rainfall_speed = st.sidebar.slider(
+            "강우 변화 속도",
+            0.2,
+            4.0,
+            1.0,
+            0.1,
+            key="rainfall_auto_speed",
+        )
+        rainfall = round((rainfall_min + rainfall_max) / 2, 4)
+        st.sidebar.caption("최소~최대 범위 안에서 부드럽게 변합니다.")
+    else:
+        rainfall = st.sidebar.slider("강우량", 0.0, 1.0, 0.70, 0.01)
+        rainfall_min = rainfall
+        rainfall_max = rainfall
+        rainfall_speed = 1.0
+
     pipe_capacity = st.sidebar.slider("파이프 용량", 0.2, 1.5, 1.00, 0.05)
 
     blockage_configs: dict[str, tuple[BlockageLocation, float]] = {}
@@ -1202,40 +1336,7 @@ def main() -> None:
     auto_interval_ms = st.sidebar.slider("자동 실행 간격(ms)", 800, 5000, 1500, 100)
 
     st.sidebar.divider()
-    st.sidebar.subheader("자동 환경 변화")
-    rainfall_auto = st.sidebar.checkbox("강우량 자동 변화", value=False)
-    if rainfall_auto:
-        rainfall_range_cols = st.sidebar.columns(2)
-        rainfall_min = rainfall_range_cols[0].slider(
-            "최소 강우량",
-            0.0,
-            1.0,
-            min(0.25, rainfall),
-            0.01,
-            key="rainfall_auto_min",
-        )
-        rainfall_max = rainfall_range_cols[1].slider(
-            "최대 강우량",
-            0.0,
-            1.0,
-            max(0.85, rainfall),
-            0.01,
-            key="rainfall_auto_max",
-        )
-        rainfall_speed = st.sidebar.slider(
-            "강우 변화 속도",
-            0.2,
-            4.0,
-            1.0,
-            0.1,
-            key="rainfall_auto_speed",
-        )
-        st.sidebar.caption("자동 실행 또는 1 step 실행 시 범위 안에서 부드럽게 변합니다.")
-    else:
-        rainfall_min = rainfall
-        rainfall_max = rainfall
-        rainfall_speed = 1.0
-
+    st.sidebar.subheader("막힘 변동")
     blockage_wobble = st.sidebar.checkbox("막힘 정도 미세 변동", value=False)
     if blockage_wobble:
         blockage_amplitude = st.sidebar.slider(
@@ -1254,7 +1355,7 @@ def main() -> None:
             0.1,
             key="blockage_wobble_speed",
         )
-        st.sidebar.caption("막힘 위치는 유지하고, 설정한 정도만 작게 흔듭니다.")
+        st.sidebar.caption("기준 막힘 정도를 중심으로 작게 흔듭니다. 막힘 위치는 유지됩니다.")
     else:
         blockage_amplitude = 0.0
         blockage_speed = 1.0
@@ -1316,6 +1417,7 @@ def main() -> None:
     )
     render_detail_panels_fragment(auto_run=auto_run, auto_interval_ms=auto_interval_ms)
     render_mock_sensor_panel(rainfall=applied_rainfall, pipe_capacity=pipe_capacity)
+    render_runtime_api_status_panel()
     render_timeseries_preview_panel()
     render_live_latest_polling_panel()
 

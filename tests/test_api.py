@@ -5,6 +5,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from api import SensorAPIHandler
+from runtime_state import write_runtime_snapshot
 from sensor_payload import SCHEMA_VERSION
 
 LIVE_PROFILES = (
@@ -21,6 +22,30 @@ LIVE_BOUNDED_FIELDS = (
     "pipe_flow_speed",
     "pipe_flow_rate",
 )
+
+
+def runtime_payload():
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "source": "drain-sensor-simulator",
+        "mode": "runtime_snapshot",
+        "generated_at": "2026-06-17T00:00:00",
+        "rainfall": 0.72,
+        "pipe_capacity": 1.0,
+        "time_step": 12,
+        "elapsed_minutes": 12,
+        "runtime": {
+            "producer": "streamlit",
+            "generated_at": "2026-06-17T00:00:00",
+            "time_step": 12,
+            "elapsed_minutes": 12,
+        },
+        "records": [
+            {"drain_id": "DRAIN_A", "surface_water_level": 0.1, "status": "정상 배수"},
+            {"drain_id": "DRAIN_B", "surface_water_level": 0.6, "status": "상부 유입 막힘 의심"},
+            {"drain_id": "DRAIN_C", "surface_water_level": 0.2, "status": "정상 배수"},
+        ],
+    }
 
 
 def run_test_server():
@@ -145,6 +170,45 @@ def test_sensor_api_latest_sensor_endpoint():
         assert latest_c["latest"]["drain_id"] == "DRAIN_C"
         assert latest_c["latest"]["blockage_location"] == "내부"
         assert latest_drain_b["latest"]["blockage_location"] == "내부"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_sensor_api_runtime_latest_and_snapshot_source(tmp_path, monkeypatch):
+    monkeypatch.setenv("DRAIN_SIM_RUNTIME_DIR", str(tmp_path))
+    write_runtime_snapshot(runtime_payload())
+    server, base_url = run_test_server()
+    try:
+        latest = get_json(f"{base_url}/api/v1/sensors/b/latest?source=runtime")
+        snapshot = get_json(f"{base_url}/api/v1/sensors/snapshot?source=runtime")
+
+        assert latest["schema_version"] == SCHEMA_VERSION
+        assert latest["mode"] == "runtime_latest"
+        assert latest["drain_id"] == "DRAIN_B"
+        assert latest["runtime"]["producer"] == "streamlit"
+        assert latest["runtime"]["time_step"] == 12
+        assert latest["latest"]["drain_id"] == "DRAIN_B"
+        assert latest["latest"]["surface_water_level"] == 0.6
+        assert snapshot["mode"] == "runtime_snapshot"
+        assert snapshot["records"][1]["drain_id"] == "DRAIN_B"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_sensor_api_runtime_source_missing_snapshot_returns_404(tmp_path, monkeypatch):
+    monkeypatch.setenv("DRAIN_SIM_RUNTIME_DIR", str(tmp_path))
+    server, base_url = run_test_server()
+    try:
+        try:
+            get_json(f"{base_url}/api/v1/sensors/b/latest?source=runtime")
+        except HTTPError as exc:
+            assert exc.code == 404
+            error = json.loads(exc.read().decode("utf-8"))
+            assert error["error"] == "runtime_snapshot_not_found"
+        else:
+            raise AssertionError("runtime source should return 404 before Streamlit writes")
     finally:
         server.shutdown()
         server.server_close()

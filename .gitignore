@@ -11,6 +11,7 @@ dist/
 build/
 *.egg-info/
 .streamlit/secrets.toml
+.runtime/
 mock_sensor_*.json
 mock_sensor_*.jsonl
 .DS_Store
