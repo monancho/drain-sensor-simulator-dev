@@ -136,26 +136,16 @@ def test_build_latest_endpoint_url_for_runtime_live_and_snapshot():
         build_latest_endpoint_url(
             base_url="http://127.0.0.1:8765/",
             drain_id="DRAIN_B",
-            source="runtime",
         )
-        == "http://127.0.0.1:8765/api/v1/sensors/b/latest?source=runtime"
+        == "http://127.0.0.1:8765/drains/b/latest"
     )
     assert (
         build_latest_endpoint_url(
             base_url="http://127.0.0.1:8765",
             drain_id="DRAIN_C",
-            source="live",
-            profile="storm_pulse",
+            detail=True,
         )
-        == "http://127.0.0.1:8765/api/v1/sensors/c/latest?mode=live&profile=storm_pulse"
-    )
-    assert (
-        build_latest_endpoint_url(
-            base_url="http://127.0.0.1:8765",
-            drain_id="DRAIN_A",
-            source="snapshot",
-        )
-        == "http://127.0.0.1:8765/api/v1/sensors/a/latest"
+        == "http://127.0.0.1:8765/drains/c/latest/detail"
     )
 
 

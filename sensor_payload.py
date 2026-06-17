@@ -63,6 +63,13 @@ NORMALIZED_UNITS = {
         "remaining_pipe_capacity",
     )
 }
+COMPACT_SENSOR_FIELDS = (
+    "drain_id",
+    "timestamp",
+    "surface_water_level",
+    "pipe_water_level",
+    "pipe_flow_speed",
+)
 
 
 def float_value(state: dict[str, float | str], field: str) -> float:
@@ -208,6 +215,24 @@ def build_mock_sensor_records(payload: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return records
+
+
+def build_compact_sensor_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Return a minimal latest-value record shaped like a simple sensor payload."""
+
+    return {
+        "drain_id": record["drain_id"],
+        "timestamp": record["observed_at"],
+        "surface_water_level": record["surface_water_level"],
+        "pipe_water_level": record["pipe_water_level"],
+        "pipe_flow_speed": record["pipe_flow_speed"],
+    }
+
+
+def build_compact_sensor_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return compact records for UI tables, JSONL, and short latest endpoints."""
+
+    return [build_compact_sensor_record(record) for record in records]
 
 
 def build_mock_sensor_timeseries_payload(

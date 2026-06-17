@@ -148,7 +148,7 @@ docker compose up --build
 ```bash
 docker compose ps
 curl "http://127.0.0.1:8765/health"
-curl "http://127.0.0.1:8765/api/v1/sensors/b/latest?source=runtime"
+curl "http://127.0.0.1:8765/drains/b/latest"
 ```
 
 처음에는 Streamlit이 아직 snapshot을 저장하지 않았으므로 `source=runtime` 호출이 `runtime_snapshot_not_found`를 반환할 수 있습니다. 브라우저에서 `http://127.0.0.1:8501`을 열고 `1 step`을 한 번 누르거나 `시작`을 누른 뒤 다시 호출하면 `runtime_latest`가 반환됩니다.
@@ -208,6 +208,8 @@ python api.py
 | Endpoint | 설명 |
 |---|---|
 | `GET /health` | API 상태 확인 |
+| `GET /drains/{a,b,c}/latest` | Streamlit runtime 기반 compact 최신 센서값 |
+| `GET /drains/{a,b,c}/latest/detail` | Streamlit runtime 기반 상세 최신 센서값 |
 | `GET /api/v1/sensors/schema` | schema version, 기본 drain 설정, scenario 목록 |
 | `GET /api/v1/sensors/snapshot` | 현재 요청 조건으로 시뮬레이션한 JSON snapshot |
 | `GET /api/v1/sensors/snapshot?source=runtime` | Streamlit이 마지막으로 저장한 runtime snapshot |
@@ -225,6 +227,36 @@ python api.py
 ```bash
 curl "http://127.0.0.1:8765/health"
 ```
+
+실제 센서처럼 최소 필드만 가져오는 짧은 최신값 API:
+
+```bash
+curl "http://127.0.0.1:8765/drains/a/latest"
+curl "http://127.0.0.1:8765/drains/b/latest"
+curl "http://127.0.0.1:8765/drains/c/latest"
+```
+
+compact 응답은 다음 필드만 포함합니다.
+
+```json
+{
+  "drain_id": "DRAIN_B",
+  "timestamp": "2026-06-17T09:20:00",
+  "surface_water_level": 0.61,
+  "pipe_water_level": 0.42,
+  "pipe_flow_speed": 0.31
+}
+```
+
+compact 응답에는 실제 센서값이 아닌 판단/시뮬레이터 필드인 `status`와 `inlet_flow`를 포함하지 않습니다.
+
+상세 mock/debug 필드가 필요할 때:
+
+```bash
+curl "http://127.0.0.1:8765/drains/b/latest/detail"
+```
+
+기존 `/api/v1/sensors/...` endpoint는 mock API 계약, scenario, live profile, 상세 디버깅 용도로 계속 유지됩니다.
 
 단일 snapshot:
 
@@ -282,10 +314,16 @@ python api.py
 
 3. Streamlit에서 `1 step`을 누르거나 `시작`을 누릅니다. 이때 현재 센서 snapshot이 `.runtime/current_snapshot.json`에 저장됩니다.
 
-4. `API 설정` 탭에서 endpoint를 확인하고, Postman 또는 백엔드에서 polling:
+4. `API 설정` 탭에서 short endpoint를 확인하고, Postman 또는 백엔드에서 polling:
 
 ```bash
-curl "http://127.0.0.1:8765/api/v1/sensors/b/latest?source=runtime"
+curl "http://127.0.0.1:8765/drains/b/latest"
+```
+
+상세값:
+
+```bash
+curl "http://127.0.0.1:8765/drains/b/latest/detail"
 ```
 
 전체 runtime snapshot:

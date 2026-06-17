@@ -3,6 +3,8 @@ import json
 from sensor_model import attach_sensor_status
 from sensor_payload import (
     SCHEMA_VERSION,
+    build_compact_sensor_record,
+    build_compact_sensor_records,
     build_mock_sensor_payload,
     build_mock_sensor_records,
     dumps_mock_sensor_payload,
@@ -87,3 +89,51 @@ def test_mock_sensor_records_are_flat_and_serializable():
 
     assert parsed_payload["schema_version"] == SCHEMA_VERSION
     assert parsed_records[2]["sensor_id"] == "SIM-DRAIN_C"
+
+
+def test_compact_sensor_record_contains_only_sensor_values():
+    full_record = {
+        "drain_id": "DRAIN_B",
+        "observed_at": "2026-06-15T12:00:00",
+        "surface_water_level": 0.61,
+        "pipe_water_level": 0.42,
+        "pipe_flow_speed": 0.31,
+        "inlet_flow": 0.12,
+        "status": "상부 유입 막힘 의심",
+    }
+
+    compact = build_compact_sensor_record(full_record)
+
+    assert compact == {
+        "drain_id": "DRAIN_B",
+        "timestamp": "2026-06-15T12:00:00",
+        "surface_water_level": 0.61,
+        "pipe_water_level": 0.42,
+        "pipe_flow_speed": 0.31,
+    }
+    assert "status" not in compact
+    assert "inlet_flow" not in compact
+
+
+def test_compact_sensor_records_maps_each_record():
+    records = build_mock_sensor_records(
+        build_mock_sensor_payload(
+            build_states(),
+            rainfall=0.8,
+            pipe_capacity=1.0,
+            time_step=4,
+            elapsed_minutes=4,
+            generated_at="2026-06-15T12:00:00",
+        )
+    )
+
+    compact_records = build_compact_sensor_records(records)
+
+    assert len(compact_records) == 3
+    assert set(compact_records[0]) == {
+        "drain_id",
+        "timestamp",
+        "surface_water_level",
+        "pipe_water_level",
+        "pipe_flow_speed",
+    }

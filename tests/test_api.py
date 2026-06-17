@@ -41,9 +41,36 @@ def runtime_payload():
             "elapsed_minutes": 12,
         },
         "records": [
-            {"drain_id": "DRAIN_A", "surface_water_level": 0.1, "status": "정상 배수"},
-            {"drain_id": "DRAIN_B", "surface_water_level": 0.6, "status": "상부 유입 막힘 의심"},
-            {"drain_id": "DRAIN_C", "surface_water_level": 0.2, "status": "정상 배수"},
+            {
+                "sensor_id": "SIM-DRAIN_A",
+                "drain_id": "DRAIN_A",
+                "observed_at": "2026-06-17T00:00:00",
+                "surface_water_level": 0.1,
+                "pipe_water_level": 0.2,
+                "pipe_flow_speed": 0.3,
+                "inlet_flow": 0.4,
+                "status": "정상 배수",
+            },
+            {
+                "sensor_id": "SIM-DRAIN_B",
+                "drain_id": "DRAIN_B",
+                "observed_at": "2026-06-17T00:00:00",
+                "surface_water_level": 0.6,
+                "pipe_water_level": 0.7,
+                "pipe_flow_speed": 0.8,
+                "inlet_flow": 0.2,
+                "status": "상부 유입 막힘 의심",
+            },
+            {
+                "sensor_id": "SIM-DRAIN_C",
+                "drain_id": "DRAIN_C",
+                "observed_at": "2026-06-17T00:00:00",
+                "surface_water_level": 0.2,
+                "pipe_water_level": 0.3,
+                "pipe_flow_speed": 0.4,
+                "inlet_flow": 0.5,
+                "status": "정상 배수",
+            },
         ],
     }
 
@@ -192,6 +219,67 @@ def test_sensor_api_runtime_latest_and_snapshot_source(tmp_path, monkeypatch):
         assert latest["latest"]["surface_water_level"] == 0.6
         assert snapshot["mode"] == "runtime_snapshot"
         assert snapshot["records"][1]["drain_id"] == "DRAIN_B"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_short_drain_latest_returns_compact_runtime_record(tmp_path, monkeypatch):
+    monkeypatch.setenv("DRAIN_SIM_RUNTIME_DIR", str(tmp_path))
+    write_runtime_snapshot(runtime_payload())
+    server, base_url = run_test_server()
+    try:
+        latest = get_json(f"{base_url}/drains/b/latest")
+        latest_alias = get_json(f"{base_url}/drains/drain_b/latest")
+
+        expected = {
+            "drain_id": "DRAIN_B",
+            "timestamp": "2026-06-17T00:00:00",
+            "surface_water_level": 0.6,
+            "pipe_water_level": 0.7,
+            "pipe_flow_speed": 0.8,
+        }
+        assert latest == expected
+        assert latest_alias == expected
+        assert "status" not in latest
+        assert "inlet_flow" not in latest
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_short_drain_latest_detail_returns_runtime_wrapper(tmp_path, monkeypatch):
+    monkeypatch.setenv("DRAIN_SIM_RUNTIME_DIR", str(tmp_path))
+    write_runtime_snapshot(runtime_payload())
+    server, base_url = run_test_server()
+    try:
+        payload = get_json(f"{base_url}/drains/b/latest/detail")
+
+        assert payload["schema_version"] == SCHEMA_VERSION
+        assert payload["mode"] == "runtime_latest"
+        assert payload["view"] == "detail"
+        assert payload["drain_id"] == "DRAIN_B"
+        assert payload["runtime"]["producer"] == "streamlit"
+        assert payload["latest"]["sensor_id"] == "SIM-DRAIN_B"
+        assert payload["latest"]["status"] == "상부 유입 막힘 의심"
+        assert payload["latest"]["inlet_flow"] == 0.2
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_short_drain_latest_missing_runtime_returns_404(tmp_path, monkeypatch):
+    monkeypatch.setenv("DRAIN_SIM_RUNTIME_DIR", str(tmp_path))
+    server, base_url = run_test_server()
+    try:
+        try:
+            get_json(f"{base_url}/drains/b/latest")
+        except HTTPError as exc:
+            assert exc.code == 404
+            error = json.loads(exc.read().decode("utf-8"))
+            assert error["error"] == "runtime_snapshot_not_found"
+        else:
+            raise AssertionError("short latest should return 404 before Streamlit writes")
     finally:
         server.shutdown()
         server.server_close()

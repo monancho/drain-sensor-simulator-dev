@@ -16,6 +16,7 @@ from sensor_api_service import SCENARIO_DEFINITIONS, simulate_sensor_timeseries
 from sensor_model import attach_sensor_status
 from sensor_payload import (
     SCHEMA_VERSION,
+    build_compact_sensor_records,
     build_mock_sensor_payload,
     build_mock_sensor_records,
     dumps_mock_sensor_payload,
@@ -156,21 +157,14 @@ def build_latest_endpoint_url(
     *,
     base_url: str,
     drain_id: str,
-    source: str,
-    profile: str = "storm_pulse",
+    detail: bool = False,
 ) -> str:
     """Build a Postman-friendly latest endpoint URL."""
 
     normalized_base_url = base_url.rstrip("/")
     drain_key = drain_id.replace("DRAIN_", "").lower()
-    if source == "live":
-        return (
-            f"{normalized_base_url}/api/v1/sensors/{drain_key}/latest"
-            f"?mode=live&profile={profile}"
-        )
-    if source == "snapshot":
-        return f"{normalized_base_url}/api/v1/sensors/{drain_key}/latest"
-    return f"{normalized_base_url}/api/v1/sensors/{drain_key}/latest?source=runtime"
+    suffix = "/detail" if detail else ""
+    return f"{normalized_base_url}/drains/{drain_key}/latest{suffix}"
 
 
 def build_runtime_sensor_payload(
@@ -823,11 +817,13 @@ def render_mock_sensor_panel(*, rainfall: float, pipe_capacity: float) -> None:
         generated_at=generated_at,
     )
     records = build_mock_sensor_records(payload)
+    detail_records = st.checkbox("상세 필드 보기", value=False, key="sensor_data_detail")
+    visible_records = records if detail_records else build_compact_sensor_records(records)
     payload_json = dumps_mock_sensor_payload(payload)
-    records_jsonl = dumps_mock_sensor_records_jsonl(records)
+    records_jsonl = dumps_mock_sensor_records_jsonl(visible_records)
 
     st.subheader("목업 센서 데이터")
-    st.dataframe(pd.DataFrame(records), width="stretch", hide_index=True)
+    st.dataframe(pd.DataFrame(visible_records), width="stretch", hide_index=True)
 
     download_cols = st.columns(2)
     download_cols[0].download_button(
@@ -840,7 +836,11 @@ def render_mock_sensor_panel(*, rainfall: float, pipe_capacity: float) -> None:
     download_cols[1].download_button(
         "JSONL records",
         data=records_jsonl,
-        file_name="mock_sensor_records.jsonl",
+        file_name=(
+            "mock_sensor_records_detail.jsonl"
+            if detail_records
+            else "mock_sensor_records_compact.jsonl"
+        ),
         mime="application/x-ndjson",
         width="stretch",
     )
@@ -870,7 +870,7 @@ def render_api_settings_panel() -> None:
     st.subheader("API 설정")
     render_runtime_api_status_panel()
 
-    control_cols = st.columns([0.34, 0.18, 0.18, 0.30])
+    control_cols = st.columns([0.46, 0.18, 0.18, 0.18])
     base_url = control_cols[0].text_input(
         "Base URL",
         value="http://127.0.0.1:8765",
@@ -882,36 +882,24 @@ def render_api_settings_panel() -> None:
         index=1,
         key="api_settings_drain",
     )
-    source = control_cols[2].selectbox(
-        "소스",
-        options=["runtime", "live", "snapshot"],
-        index=0,
-        key="api_settings_source",
+    detail = control_cols[2].checkbox(
+        "상세 응답",
+        value=False,
+        key="api_settings_detail",
     )
-    profile_options = sorted(LIVE_PROFILES)
-    profile = control_cols[3].selectbox(
-        "live profile",
-        options=profile_options,
-        index=profile_options.index("storm_pulse"),
-        format_func=lambda value: LIVE_PROFILE_LABELS.get(value, value),
-        disabled=source != "live",
-        key="api_settings_profile",
-    )
+    control_cols[3].caption("기본값은 실제 센서처럼 최소 필드만 반환합니다.")
     drain_id = f"DRAIN_{drain_label}"
     endpoint_url = build_latest_endpoint_url(
         base_url=base_url,
         drain_id=drain_id,
-        source=source,
-        profile=profile,
+        detail=detail,
     )
 
     st.code(f"GET {endpoint_url}", language="http")
-    if source == "runtime":
-        st.caption("runtime은 Streamlit 화면이 마지막으로 저장한 센서 상태를 읽습니다.")
-    elif source == "live":
-        st.caption("live는 API가 stateless mock 최신값을 생성합니다.")
+    if detail:
+        st.caption("상세 응답은 runtime metadata와 simulator/debug용 전체 필드를 포함합니다.")
     else:
-        st.caption("snapshot은 API가 기본 요청 조건으로 즉석 mock 값을 생성합니다.")
+        st.caption("compact 응답은 drain_id, timestamp, surface/pipe 수위, pipe 유속만 포함합니다.")
 
     render_live_latest_polling_panel()
 

@@ -32,6 +32,7 @@ from sensor_api_service import (
     simulate_sensor_snapshot,
     simulate_sensor_timeseries,
 )
+from sensor_payload import build_compact_sensor_record
 from simulation import DRAIN_IDS
 
 SENSOR_PATH_ALIASES = {
@@ -130,6 +131,28 @@ def drain_id_from_path(path: str) -> str | None:
         return None
 
     return SENSOR_PATH_ALIASES.get(raw_drain_id.strip().lower())
+
+
+def short_drain_latest_from_path(path: str) -> tuple[str, bool] | None:
+    """Return drain id and detail flag for /drains/{id}/latest[/detail] paths."""
+
+    prefix = "/drains/"
+    if not path.startswith(prefix):
+        return None
+
+    parts = [part for part in path[len(prefix):].split("/") if part]
+    if len(parts) not in (2, 3):
+        return None
+    if parts[1].lower() != "latest":
+        return None
+    detail = len(parts) == 3 and parts[2].lower() == "detail"
+    if len(parts) == 3 and not detail:
+        return None
+
+    drain_id = SENSOR_PATH_ALIASES.get(parts[0].strip().lower())
+    if drain_id is None:
+        return None
+    return drain_id, detail
 
 
 def stable_seed_int(*parts: object) -> int:
@@ -308,6 +331,16 @@ def runtime_latest_payload(drain_id: str) -> dict[str, Any]:
     }
 
 
+def short_runtime_latest_payload(drain_id: str, *, detail: bool) -> dict[str, Any]:
+    """Return short latest endpoint payloads backed by Streamlit runtime state."""
+
+    if detail:
+        payload = runtime_latest_payload(drain_id)
+        payload["view"] = "detail"
+        return payload
+    return build_compact_sensor_record(get_runtime_latest_record(drain_id))
+
+
 def latest_sensor_payload(drain_id: str, request: dict[str, Any]) -> dict[str, Any]:
     """Build a compact latest-value response for one drain."""
 
@@ -365,6 +398,8 @@ class SensorAPIHandler(BaseHTTPRequestHandler):
                         "scenarios": available_scenarios(),
                         "live_profiles": sorted(LIVE_PROFILES),
                         "endpoints": [
+                            "GET /drains/{a,b,c}/latest",
+                            "GET /drains/{a,b,c}/latest/detail",
                             "GET /api/v1/sensors/snapshot",
                             "GET /api/v1/sensors/records",
                             "GET /api/v1/sensors/{a,b,c}/latest",
@@ -395,6 +430,12 @@ class SensorAPIHandler(BaseHTTPRequestHandler):
 
             if parsed.path == "/api/v1/sensors/timeseries":
                 self.send_json(simulate_sensor_timeseries(request_from_query(query)))
+                return
+
+            short_latest = short_drain_latest_from_path(parsed.path)
+            if short_latest is not None:
+                drain_id, detail = short_latest
+                self.send_json(short_runtime_latest_payload(drain_id, detail=detail))
                 return
 
             drain_id = drain_id_from_path(parsed.path)
