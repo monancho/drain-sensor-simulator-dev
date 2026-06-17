@@ -13,6 +13,8 @@ def test_dockerfile_runs_streamlit_and_api_entrypoint():
     assert "FROM python:3.11-slim" in dockerfile
     assert "DRAIN_SIM_RUNTIME_DIR=/app/.runtime" in dockerfile
     assert "EXPOSE 8501 8765" in dockerfile
+    assert "HEALTHCHECK" in dockerfile
+    assert "127.0.0.1:{port}/health" in dockerfile
     assert 'CMD ["./scripts/start-container.sh"]' in dockerfile
 
 
@@ -23,6 +25,8 @@ def test_compose_exposes_ui_api_and_shared_runtime_volume():
     assert "8765:8765" in compose
     assert "DRAIN_SIM_RUNTIME_DIR: /app/.runtime" in compose
     assert "drain-sensor-runtime:/app/.runtime" in compose
+    assert "healthcheck:" in compose
+    assert "http://127.0.0.1:8765/health" in compose
 
 
 def test_container_start_script_launches_api_and_streamlit():

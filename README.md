@@ -146,6 +146,7 @@ docker compose up --build
 확인:
 
 ```bash
+docker compose ps
 curl "http://127.0.0.1:8765/health"
 curl "http://127.0.0.1:8765/api/v1/sensors/b/latest?source=runtime"
 ```
@@ -153,6 +154,8 @@ curl "http://127.0.0.1:8765/api/v1/sensors/b/latest?source=runtime"
 처음에는 Streamlit이 아직 snapshot을 저장하지 않았으므로 `source=runtime` 호출이 `runtime_snapshot_not_found`를 반환할 수 있습니다. 브라우저에서 `http://127.0.0.1:8501`을 열고 `1 step`을 한 번 누르거나 `시작`을 누른 뒤 다시 호출하면 `runtime_latest`가 반환됩니다.
 
 runtime 공유 경로는 기본적으로 `/app/.runtime`입니다. 다른 볼륨이나 경로를 쓰려면 `DRAIN_SIM_RUNTIME_DIR` 환경변수를 바꾸면 됩니다.
+
+컨테이너 헬스체크는 API의 `/health` endpoint를 기준으로 동작합니다. `docker compose ps`에서 서비스가 `healthy`로 표시되면 Mock API가 정상 응답하는 상태입니다.
 
 ## 막힘 구분 정책
 
@@ -293,7 +296,7 @@ curl "http://127.0.0.1:8765/api/v1/sensors/snapshot?source=runtime"
 
 `source=runtime`은 Streamlit이 마지막으로 저장한 현재 mock 센서 상태를 읽습니다. WebSocket/SSE가 아니라 파일 기반 runtime snapshot을 1~2초마다 polling하는 방식입니다. 아직 Streamlit에서 한 번도 step이 실행되지 않았다면 404와 함께 `runtime_snapshot_not_found`가 반환됩니다.
 
-Docker 배포를 염두에 둘 때는 Streamlit 프로세스와 API 프로세스가 같은 `.runtime` 디렉터리를 보게 하면 됩니다. 기본 경로는 `.runtime`이며, `DRAIN_SIM_RUNTIME_DIR` 환경변수로 컨테이너 내부 공유 경로나 볼륨 경로를 지정할 수 있습니다. 실제 Dockerfile 작성은 별도 단계로 분리합니다.
+Docker 배포를 염두에 둘 때는 Streamlit 프로세스와 API 프로세스가 같은 `.runtime` 디렉터리를 보게 하면 됩니다. 기본 로컬 경로는 `.runtime`이고, Docker 기본 경로는 `/app/.runtime`입니다. `DRAIN_SIM_RUNTIME_DIR` 환경변수로 컨테이너 내부 공유 경로나 볼륨 경로를 지정할 수 있습니다.
 
 scenario timeseries:
 
