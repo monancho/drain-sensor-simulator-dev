@@ -15,6 +15,10 @@ MetricName = Literal[
     "inlet_flow",
     "pipe_flow_rate",
     "stagnation_score",
+    "pipe_surcharge_to_surface",
+    "surface_spill_out",
+    "surface_water_delta",
+    "pipe_water_delta",
 ]
 
 KOREAN_FONT_CANDIDATES = (
@@ -29,6 +33,10 @@ TITLE_FALLBACKS = {
     "관로 수위 변화": "Pipe water level",
     "관로 유속 변화": "Pipe flow speed",
     "배수구 유입량 변화": "Inlet flow",
+    "관로 역류 노면 유입": "Pipe surcharge to surface",
+    "도로 유출 변화": "Surface spill out",
+    "도로 수위 변화량": "Surface water delta",
+    "관로 수위 변화량": "Pipe water delta",
 }
 EMPTY_MESSAGE = "No records yet."
 DRAIN_COLORS = {
