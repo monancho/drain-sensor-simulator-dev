@@ -1,0 +1,18 @@
+services:
+  drain-sensor-simulator:
+    build: .
+    image: drain-sensor-simulator:local
+    environment:
+      DRAIN_SIM_RUNTIME_DIR: /app/.runtime
+      API_HOST: 0.0.0.0
+      API_PORT: "8765"
+      STREAMLIT_HOST: 0.0.0.0
+      STREAMLIT_PORT: "8501"
+    ports:
+      - "8501:8501"
+      - "8765:8765"
+    volumes:
+      - drain-sensor-runtime:/app/.runtime
+
+volumes:
+  drain-sensor-runtime:
