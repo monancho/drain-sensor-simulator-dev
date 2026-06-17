@@ -57,10 +57,15 @@ make test
 make lint
 ```
 
-Docker로 Streamlit UI와 Mock API를 함께 띄우는 경우:
+Docker 이미지로 Streamlit UI와 Mock API를 함께 바로 실행하는 경우:
 
 ```bash
-docker compose up --build
+docker pull ghcr.io/monancho/drain-sensor-simulator-dev:latest
+
+docker run --rm \
+  -p 8501:8501 \
+  -p 8765:8765 \
+  ghcr.io/monancho/drain-sensor-simulator-dev:latest
 ```
 
 접속:
@@ -71,7 +76,7 @@ docker compose up --build
 컨테이너 안에서는 Streamlit과 API가 같은 `/app/.runtime`을 공유합니다. Streamlit에서 `시작` 또는 `1 step`을 사용한 뒤, `API 설정` 탭의 endpoint를 Postman에서 polling하면 화면과 같은 최신 mock 센서값을 가져올 수 있습니다.
 
 ```bash
-curl "http://127.0.0.1:8765/api/v1/sensors/b/latest?source=runtime"
+curl "http://127.0.0.1:8765/drains/b/latest"
 ```
 
 Dev Container를 쓰는 경우:
@@ -127,9 +132,63 @@ Streamlit Community Cloud는 기본적으로 `streamlit run app.py`로 UI 앱을
 - [Prep and deploy your app on Community Cloud](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app)
 - [App dependencies for Community Cloud](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/app-dependencies)
 
-## Docker 로컬 통합 실행
+## Docker 이미지 실행
 
-`Dockerfile`과 `docker-compose.yml`은 데모 배포 전 로컬 통합 테스트용입니다. 하나의 컨테이너에서 두 프로세스를 실행합니다.
+외부 사용자는 `docker-compose.yml`을 만들 필요 없이 공개 이미지를 받아 바로 실행할 수 있습니다. 컨테이너 하나에서 Streamlit UI와 Mock API가 함께 실행됩니다.
+
+```text
+container
+  ├─ streamlit run app.py  -> 8501
+  └─ python api.py         -> 8765
+```
+
+실행:
+
+```bash
+docker pull ghcr.io/monancho/drain-sensor-simulator-dev:latest
+
+docker run --rm \
+  -p 8501:8501 \
+  -p 8765:8765 \
+  ghcr.io/monancho/drain-sensor-simulator-dev:latest
+```
+
+확인:
+
+```bash
+curl "http://127.0.0.1:8765/health"
+curl "http://127.0.0.1:8765/drains/b/latest"
+curl "http://127.0.0.1:8765/drains/b/latest/detail"
+```
+
+처음에는 Streamlit이 아직 snapshot을 저장하지 않았으므로 `/drains/b/latest` 호출이 `runtime_snapshot_not_found`를 반환할 수 있습니다. 브라우저에서 `http://127.0.0.1:8501`을 열고 `1 step`을 한 번 누르거나 `시작`을 누른 뒤 다시 호출하면 최신 mock 센서값이 반환됩니다.
+
+runtime 공유 경로는 기본적으로 `/app/.runtime`입니다. 다른 볼륨이나 경로를 쓰려면 `DRAIN_SIM_RUNTIME_DIR` 환경변수를 바꿀 수 있습니다.
+
+```bash
+docker run --rm \
+  -p 8501:8501 \
+  -p 8765:8765 \
+  -e DRAIN_SIM_RUNTIME_DIR=/data/runtime \
+  -v drain-sensor-runtime:/data/runtime \
+  ghcr.io/monancho/drain-sensor-simulator-dev:latest
+```
+
+컨테이너 헬스체크는 API의 `/health` endpoint를 기준으로 동작합니다.
+
+### GitHub Container Registry
+
+`.github/workflows/docker-image.yml`은 `main` 브랜치에 push될 때 GitHub Container Registry에 이미지를 발행합니다.
+
+- `main` push: `ghcr.io/monancho/drain-sensor-simulator-dev:latest`
+- tag push: `ghcr.io/monancho/drain-sensor-simulator-dev:<tag>`
+- commit별 추적용: `ghcr.io/monancho/drain-sensor-simulator-dev:sha-<commit>`
+
+GitHub repository의 package visibility가 private이면 외부 사용자는 pull 권한이 필요합니다. 공개 데모용이면 GHCR package를 public으로 전환하면 `docker pull`만으로 사용할 수 있습니다.
+
+## Docker Compose 로컬 통합 실행
+
+`docker-compose.yml`은 개발/로컬 통합 테스트용 편의 파일입니다. 공개 이미지 사용자는 compose 파일을 직접 만들 필요가 없습니다.
 
 ```text
 container
@@ -151,7 +210,7 @@ curl "http://127.0.0.1:8765/health"
 curl "http://127.0.0.1:8765/drains/b/latest"
 ```
 
-처음에는 Streamlit이 아직 snapshot을 저장하지 않았으므로 `source=runtime` 호출이 `runtime_snapshot_not_found`를 반환할 수 있습니다. 브라우저에서 `http://127.0.0.1:8501`을 열고 `1 step`을 한 번 누르거나 `시작`을 누른 뒤 다시 호출하면 `runtime_latest`가 반환됩니다.
+처음에는 Streamlit이 아직 snapshot을 저장하지 않았으므로 `/drains/b/latest` 호출이 `runtime_snapshot_not_found`를 반환할 수 있습니다. 브라우저에서 `http://127.0.0.1:8501`을 열고 `1 step`을 한 번 누르거나 `시작`을 누른 뒤 다시 호출하면 최신 mock 센서값이 반환됩니다.
 
 runtime 공유 경로는 기본적으로 `/app/.runtime`입니다. 다른 볼륨이나 경로를 쓰려면 `DRAIN_SIM_RUNTIME_DIR` 환경변수를 바꾸면 됩니다.
 
@@ -492,7 +551,7 @@ POST scenario body:
 ```bash
 pytest -q
 ruff check .
-python -m py_compile app.py simulation.py sensor_model.py visualization.py canvas_renderer.py sensor_payload.py sensor_api_service.py api.py
+python -m py_compile app.py simulation.py sensor_model.py visualization.py canvas_renderer.py sensor_payload.py sensor_api_service.py api.py runtime_state.py
 ```
 
 Streamlit과 API smoke test:
