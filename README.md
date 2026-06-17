@@ -59,6 +59,8 @@ make lint
 
 Docker 이미지로 Streamlit UI와 Mock API를 함께 바로 실행하는 경우:
 
+Linux/macOS 또는 Git Bash:
+
 ```bash
 docker pull ghcr.io/monancho/drain-sensor-simulator-dev:latest
 
@@ -66,6 +68,13 @@ docker run --rm \
   -p 8501:8501 \
   -p 8765:8765 \
   ghcr.io/monancho/drain-sensor-simulator-dev:latest
+```
+
+Windows PowerShell:
+
+```powershell
+docker pull ghcr.io/monancho/drain-sensor-simulator-dev:latest
+docker run --rm -p 8501:8501 -p 8765:8765 ghcr.io/monancho/drain-sensor-simulator-dev:latest
 ```
 
 접속:
@@ -144,6 +153,8 @@ container
 
 실행:
 
+Linux/macOS 또는 Git Bash:
+
 ```bash
 docker pull ghcr.io/monancho/drain-sensor-simulator-dev:latest
 
@@ -151,6 +162,13 @@ docker run --rm \
   -p 8501:8501 \
   -p 8765:8765 \
   ghcr.io/monancho/drain-sensor-simulator-dev:latest
+```
+
+Windows PowerShell:
+
+```powershell
+docker pull ghcr.io/monancho/drain-sensor-simulator-dev:latest
+docker run --rm -p 8501:8501 -p 8765:8765 ghcr.io/monancho/drain-sensor-simulator-dev:latest
 ```
 
 확인:
