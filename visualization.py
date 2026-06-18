@@ -33,6 +33,7 @@ TITLE_FALLBACKS = {
     "관로 수위 변화": "Pipe water level",
     "관로 유속 변화": "Pipe flow speed",
     "배수구 유입량 변화": "Inlet flow",
+    "관로 유량": "Pipe flow rate",
     "관로 역류 노면 유입": "Pipe surcharge to surface",
     "도로 유출 변화": "Surface spill out",
     "도로 수위 변화량": "Surface water delta",

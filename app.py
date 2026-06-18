@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import html
+import json
 import math
 from datetime import datetime
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -43,6 +45,8 @@ LIVE_PROFILE_LABELS = {
     "internal_stagnation_live": "내부 정체 변동",
     "mixed_unstable": "복합 불안정",
 }
+PRESET_VERSION = "drain-sim-preset.v1"
+BLOCKAGE_LOCATION_OPTIONS: tuple[BlockageLocation, ...] = ("없음", "상부", "내부", "복합")
 
 
 def clamp_unit(value: float) -> float:
@@ -165,6 +169,193 @@ def build_latest_endpoint_url(
     drain_key = drain_id.replace("DRAIN_", "").lower()
     suffix = "/detail" if detail else ""
     return f"{normalized_base_url}/drains/{drain_key}/latest{suffix}"
+
+
+def validate_unit_value(value: Any, field_name: str) -> float:
+    """Validate a normalized 0~1 preset value."""
+
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{field_name} 값은 숫자여야 합니다.")
+    normalized = float(value)
+    if not 0.0 <= normalized <= 1.0:
+        raise ValueError(f"{field_name} 값은 0~1 범위여야 합니다.")
+    return round(normalized, 4)
+
+
+def validate_positive_value(
+    value: Any,
+    field_name: str,
+    *,
+    minimum: float = 0.01,
+    maximum: float = 10.0,
+) -> float:
+    """Validate a positive bounded preset value."""
+
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{field_name} 값은 숫자여야 합니다.")
+    normalized = float(value)
+    if not minimum <= normalized <= maximum:
+        raise ValueError(f"{field_name} 값은 {minimum:g}~{maximum:g} 범위여야 합니다.")
+    return round(normalized, 4)
+
+
+def validate_blockage_location(value: Any, field_name: str) -> BlockageLocation:
+    """Validate a Korean blockage location from a preset."""
+
+    if value not in BLOCKAGE_LOCATION_OPTIONS:
+        allowed = ", ".join(BLOCKAGE_LOCATION_OPTIONS)
+        raise ValueError(f"{field_name} 값은 {allowed} 중 하나여야 합니다.")
+    return value
+
+
+def build_current_preset(
+    *,
+    base_rainfall: float,
+    rainfall_variation: float,
+    rainfall_speed: float,
+    pipe_capacity: float,
+    blockage_configs: dict[str, tuple[BlockageLocation, float]],
+    blockage_amplitude: float,
+    blockage_speed: float,
+    auto_interval_ms: int,
+) -> dict[str, Any]:
+    """Build a portable JSON preset from current sidebar inputs."""
+
+    return {
+        "preset_version": PRESET_VERSION,
+        "rainfall": {
+            "base": round(float(base_rainfall), 4),
+            "variation": round(float(rainfall_variation), 4),
+            "speed": round(float(rainfall_speed), 4),
+        },
+        "pipe": {
+            "capacity": round(float(pipe_capacity), 4),
+        },
+        "blockages": {
+            drain_id: {
+                "location": location,
+                "severity": round(float(severity), 4),
+            }
+            for drain_id, (location, severity) in blockage_configs.items()
+        },
+        "blockage_variation": {
+            "amount": round(float(blockage_amplitude), 4),
+            "speed": round(float(blockage_speed), 4),
+        },
+        "simulation": {
+            "auto_interval_ms": int(auto_interval_ms),
+        },
+    }
+
+
+def validate_preset(preset: Any) -> dict[str, Any]:
+    """Validate and normalize a sidebar preset JSON object."""
+
+    if not isinstance(preset, dict):
+        raise ValueError("preset은 JSON object여야 합니다.")
+    if preset.get("preset_version") != PRESET_VERSION:
+        raise ValueError(f"preset_version은 {PRESET_VERSION}이어야 합니다.")
+
+    rainfall = preset.get("rainfall")
+    pipe = preset.get("pipe")
+    blockages = preset.get("blockages")
+    blockage_variation = preset.get("blockage_variation")
+    simulation = preset.get("simulation", {})
+    if not isinstance(rainfall, dict):
+        raise ValueError("rainfall 항목이 필요합니다.")
+    if not isinstance(pipe, dict):
+        raise ValueError("pipe 항목이 필요합니다.")
+    if not isinstance(blockages, dict):
+        raise ValueError("blockages 항목이 필요합니다.")
+    if not isinstance(blockage_variation, dict):
+        raise ValueError("blockage_variation 항목이 필요합니다.")
+    if not isinstance(simulation, dict):
+        raise ValueError("simulation 항목은 object여야 합니다.")
+
+    normalized_blockages: dict[str, dict[str, Any]] = {}
+    for drain_id in DRAIN_IDS:
+        blockage = blockages.get(drain_id)
+        if not isinstance(blockage, dict):
+            raise ValueError(f"{drain_id} 막힘 설정이 필요합니다.")
+        normalized_blockages[drain_id] = {
+            "location": validate_blockage_location(
+                blockage.get("location"),
+                f"{drain_id}.location",
+            ),
+            "severity": validate_unit_value(
+                blockage.get("severity"),
+                f"{drain_id}.severity",
+            ),
+        }
+
+    auto_interval_ms = simulation.get("auto_interval_ms", 1500)
+    if isinstance(auto_interval_ms, bool) or not isinstance(auto_interval_ms, int | float):
+        raise ValueError("simulation.auto_interval_ms 값은 숫자여야 합니다.")
+    if not 800 <= int(auto_interval_ms) <= 5000:
+        raise ValueError("simulation.auto_interval_ms 값은 800~5000 범위여야 합니다.")
+
+    return {
+        "preset_version": PRESET_VERSION,
+        "rainfall": {
+            "base": validate_unit_value(rainfall.get("base"), "rainfall.base"),
+            "variation": validate_unit_value(
+                rainfall.get("variation"),
+                "rainfall.variation",
+            ),
+            "speed": validate_positive_value(
+                rainfall.get("speed"),
+                "rainfall.speed",
+                minimum=0.2,
+                maximum=4.0,
+            ),
+        },
+        "pipe": {
+            "capacity": validate_positive_value(
+                pipe.get("capacity"),
+                "pipe.capacity",
+                minimum=0.2,
+                maximum=1.5,
+            ),
+        },
+        "blockages": normalized_blockages,
+        "blockage_variation": {
+            "amount": validate_positive_value(
+                blockage_variation.get("amount"),
+                "blockage_variation.amount",
+                minimum=0.0,
+                maximum=0.25,
+            ),
+            "speed": validate_positive_value(
+                blockage_variation.get("speed"),
+                "blockage_variation.speed",
+                minimum=0.2,
+                maximum=4.0,
+            ),
+        },
+        "simulation": {
+            "auto_interval_ms": int(auto_interval_ms),
+        },
+    }
+
+
+def apply_preset_to_session_state(preset: dict[str, Any], session_state: Any) -> None:
+    """Apply a validated preset to Streamlit widget session keys."""
+
+    normalized = validate_preset(preset)
+    session_state["rainfall_base"] = normalized["rainfall"]["base"]
+    session_state["rainfall_variation"] = normalized["rainfall"]["variation"]
+    session_state["rainfall_speed"] = normalized["rainfall"]["speed"]
+    session_state["pipe_capacity"] = normalized["pipe"]["capacity"]
+    session_state["blockage_amplitude"] = normalized["blockage_variation"]["amount"]
+    session_state["blockage_speed"] = normalized["blockage_variation"]["speed"]
+    session_state["auto_interval_ms"] = normalized["simulation"]["auto_interval_ms"]
+    for drain_id in DRAIN_IDS:
+        session_state[f"{drain_id}_location"] = normalized["blockages"][drain_id][
+            "location"
+        ]
+        session_state[f"{drain_id}_severity"] = normalized["blockages"][drain_id][
+            "severity"
+        ]
 
 
 def build_runtime_sensor_payload(
@@ -575,6 +766,58 @@ def initialize_session_state() -> None:
         st.session_state.auto_run_enabled = False
 
 
+def apply_pending_preset_if_needed() -> None:
+    """Apply a preset queued by the sidebar import button before widgets render."""
+
+    pending_preset = st.session_state.pop("pending_sidebar_preset", None)
+    if pending_preset is None:
+        return
+    apply_preset_to_session_state(pending_preset, st.session_state)
+    st.session_state.preset_import_message = "설정 preset을 적용했습니다."
+
+
+def render_preset_share_panel(current_preset: dict[str, Any]) -> None:
+    """Render sidebar import/export controls for portable demo settings."""
+
+    preset_json = json.dumps(current_preset, ensure_ascii=False, indent=2)
+    with st.sidebar.expander("설정 공유"):
+        message = st.session_state.pop("preset_import_message", None)
+        if message:
+            st.success(message)
+
+        st.caption("현재 사이드바 조건을 JSON으로 복사해 다른 컴퓨터에서 그대로 적용합니다.")
+        st.text_area(
+            "현재 설정 JSON",
+            value=preset_json,
+            height=220,
+        )
+        st.download_button(
+            "설정 JSON 다운로드",
+            data=preset_json,
+            file_name="drain_sensor_preset.json",
+            mime="application/json",
+            width="stretch",
+        )
+
+        import_text = st.text_area(
+            "설정 JSON 붙여넣기",
+            value="",
+            height=150,
+            key="preset_import_text",
+            placeholder="다른 컴퓨터에서 복사한 설정 JSON을 붙여넣으세요.",
+        )
+        if st.button("붙여넣은 설정 적용", width="stretch", key="preset_import_apply"):
+            try:
+                imported_preset = validate_preset(json.loads(import_text))
+            except json.JSONDecodeError as exc:
+                st.error(f"JSON 형식이 올바르지 않습니다: {exc.msg}")
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                st.session_state.pending_sidebar_preset = imported_preset
+                st.rerun()
+
+
 def append_history(
     *,
     rainfall: float,
@@ -683,21 +926,32 @@ def reset_simulation() -> None:
 
 
 def render_summary_cards(states: dict[str, dict[str, float | str]]) -> None:
-    """Render top summary cards."""
+    """Render a compact top summary and hide detailed cards by default."""
 
-    st.subheader("현재 센서 패턴")
-    st.markdown(
-        '<div class="metric-note">상부 막힘은 도로 물고임과 유입량, 내부 막힘은 관로 수위와 유속을 분리해 봅니다.</div>',
-        unsafe_allow_html=True,
+    status_text = " · ".join(
+        f"{drain_id[-1]} {states[drain_id]['sensor_status']}" for drain_id in DRAIN_IDS
     )
-    cols = st.columns(3)
+    peak_surface = max(float(states[drain_id]["surface_water_level"]) for drain_id in DRAIN_IDS)
+    peak_pipe = max(float(states[drain_id]["pipe_water_level"]) for drain_id in DRAIN_IDS)
+    min_speed = min(float(states[drain_id]["pipe_flow_speed"]) for drain_id in DRAIN_IDS)
+    st.caption(
+        f"현재 상태: {status_text} · 최대 도로 수위 {peak_surface:.2f} · "
+        f"최대 관로 수위 {peak_pipe:.2f} · 최소 유속 {min_speed:.2f}"
+    )
 
-    for col, drain_id in zip(cols, DRAIN_IDS, strict=True):
-        state = states[drain_id]
-        col.markdown(
-            render_sensor_card_html(drain_id, state),
+    with st.expander("상세 센서 카드 보기"):
+        st.markdown(
+            '<div class="metric-note">상부 막힘은 도로 물고임과 유입량, 내부 막힘은 관로 수위와 유속을 분리해 봅니다.</div>',
             unsafe_allow_html=True,
         )
+        cols = st.columns(3)
+
+        for col, drain_id in zip(cols, DRAIN_IDS, strict=True):
+            state = states[drain_id]
+            col.markdown(
+                render_sensor_card_html(drain_id, state),
+                unsafe_allow_html=True,
+            )
 
 
 def render_live_dashboard(
@@ -758,50 +1012,51 @@ def render_live_dashboard(
 
 
 def render_detail_panels() -> None:
-    """Render current tables and history charts."""
+    """Render focused history charts with detailed metrics tucked away."""
 
     states = st.session_state.drain_states
 
-    st.subheader("현재 센서값 테이블")
-    current_table = build_current_table(states)
-    st.dataframe(current_table, width="stretch", hide_index=True)
-
     history_df = pd.DataFrame(st.session_state.sensor_history)
 
-    st.subheader("센서값 히스토리")
-    graph_cols = st.columns(2)
+    st.subheader("핵심 센서 그래프")
+    graph_cols = st.columns(3)
     with graph_cols[0]:
         st.pyplot(draw_history_plot(history_df, "surface_water_level", "도로 위 물고임 변화"))
-        st.pyplot(draw_history_plot(history_df, "pipe_water_level", "관로 수위 변화"))
-
     with graph_cols[1]:
+        st.pyplot(draw_history_plot(history_df, "pipe_water_level", "관로 수위 변화"))
+    with graph_cols[2]:
         st.pyplot(draw_history_plot(history_df, "pipe_flow_speed", "관로 유속 변화"))
-        st.pyplot(draw_history_plot(history_df, "inlet_flow", "배수구 유입량 변화"))
 
     st.caption(
         "수위 센서값은 0~1 정규화라 1.0에 도달하면 상단에서 평평해질 수 있습니다. "
         "포화 이후에도 이어지는 변화는 역류·도로 유출·변화량 그래프에서 확인합니다."
     )
-    dynamics_cols = st.columns(2)
-    with dynamics_cols[0]:
-        st.pyplot(
-            draw_history_plot(
-                history_df,
-                "pipe_surcharge_to_surface",
-                "관로 역류 노면 유입",
+
+    with st.expander("상세 그래프와 현재 센서값 보기"):
+        current_table = build_current_table(states)
+        st.dataframe(current_table, width="stretch", hide_index=True)
+
+        detail_cols = st.columns(2)
+        with detail_cols[0]:
+            st.pyplot(draw_history_plot(history_df, "inlet_flow", "배수구 유입량 변화"))
+            st.pyplot(
+                draw_history_plot(
+                    history_df,
+                    "pipe_surcharge_to_surface",
+                    "관로 역류 노면 유입",
+                )
             )
-        )
-        st.pyplot(draw_history_plot(history_df, "surface_spill_out", "도로 유출 변화"))
+            st.pyplot(draw_history_plot(history_df, "surface_spill_out", "도로 유출 변화"))
 
-    with dynamics_cols[1]:
-        st.pyplot(draw_history_plot(history_df, "surface_water_delta", "도로 수위 변화량"))
-        st.pyplot(draw_history_plot(history_df, "pipe_water_delta", "관로 수위 변화량"))
+        with detail_cols[1]:
+            st.pyplot(draw_history_plot(history_df, "pipe_flow_rate", "관로 유량"))
+            st.pyplot(draw_history_plot(history_df, "surface_water_delta", "도로 수위 변화량"))
+            st.pyplot(draw_history_plot(history_df, "pipe_water_delta", "관로 수위 변화량"))
 
-    st.subheader("최근 센서 기록")
-    if history_df.empty:
-        st.info("아직 기록이 없습니다. `1 step`을 눌러 기록을 시작하세요.")
-    else:
-        st.dataframe(history_df.tail(30), width="stretch", hide_index=True)
+        if history_df.empty:
+            st.info("아직 기록이 없습니다. `1 step`을 눌러 기록을 시작하세요.")
+        else:
+            st.dataframe(history_df.tail(30), width="stretch", hide_index=True)
 
 
 def render_mock_sensor_panel(*, rainfall: float, pipe_capacity: float) -> None:
@@ -848,6 +1103,9 @@ def render_mock_sensor_panel(*, rainfall: float, pipe_capacity: float) -> None:
     with st.expander("현재 JSON payload"):
         st.json(payload, expanded=2)
 
+    with st.expander("고급: 시나리오 타임라인 목업"):
+        render_timeseries_preview_panel()
+
 
 def render_runtime_api_status_panel() -> None:
     """Render the current Streamlit-to-API shared runtime status."""
@@ -865,9 +1123,13 @@ def render_runtime_api_status_panel() -> None:
 
 
 def render_api_settings_panel() -> None:
-    """Render Postman-friendly API endpoint settings."""
+    """Render simple sharing endpoints for the current Streamlit runtime state."""
 
-    st.subheader("API 설정")
+    st.subheader("API 공유")
+    st.caption(
+        "Streamlit에서 `1 step` 또는 `시작`을 누르면 현재 화면 상태가 저장됩니다. "
+        "Postman이나 백엔드는 아래 주소를 polling해서 같은 최신 센서값을 가져올 수 있습니다."
+    )
     render_runtime_api_status_panel()
 
     control_cols = st.columns([0.46, 0.18, 0.18, 0.18])
@@ -901,7 +1163,12 @@ def render_api_settings_panel() -> None:
     else:
         st.caption("compact 응답은 drain_id, timestamp, surface/pipe 수위, pipe 유속만 포함합니다.")
 
-    render_live_latest_polling_panel()
+    with st.expander("고급: API 단독 live mock 테스트"):
+        st.caption(
+            "이 영역은 현재 Streamlit 화면 상태를 읽지 않습니다. "
+            "API가 profile/tick/seed 기준으로 독립 mock 값을 생성하는 테스트용입니다."
+        )
+        render_live_latest_polling_panel()
 
 
 def numeric_max(values: pd.Series) -> float:
@@ -1301,15 +1568,11 @@ def render_detail_tabs(
 ) -> None:
     """Render secondary demo panels in compact tabs."""
 
-    graph_tab, data_tab, scenario_tab, api_tab = st.tabs(
-        ["실시간 그래프", "센서 데이터", "시나리오", "API 설정"]
-    )
+    graph_tab, data_tab, api_tab = st.tabs(["실시간 그래프", "센서 데이터", "API 공유"])
     with graph_tab:
         render_detail_panels_fragment(auto_run=auto_run, auto_interval_ms=auto_interval_ms)
     with data_tab:
         render_mock_sensor_panel(rainfall=rainfall, pipe_capacity=pipe_capacity)
-    with scenario_tab:
-        render_timeseries_preview_panel()
     with api_tab:
         render_api_settings_panel()
 
@@ -1325,21 +1588,50 @@ def main() -> None:
     inject_theme_styles()
 
     initialize_session_state()
+    apply_pending_preset_if_needed()
 
     st.sidebar.title("시뮬레이션 입력")
     st.sidebar.caption("기준값과 변동량으로 데모 입력을 조절합니다.")
 
     st.sidebar.subheader("강우")
-    rainfall = st.sidebar.slider("기준 강우량", 0.0, 1.0, 0.70, 0.01)
-    rainfall_variation = st.sidebar.slider("강우 변동량", 0.0, 0.50, 0.20, 0.01)
-    rainfall_speed = st.sidebar.slider("강우 변화 속도", 0.2, 4.0, 1.0, 0.1)
+    rainfall = st.sidebar.slider(
+        "기준 강우량",
+        0.0,
+        1.0,
+        0.70,
+        0.01,
+        key="rainfall_base",
+    )
+    rainfall_variation = st.sidebar.slider(
+        "강우 변동량",
+        0.0,
+        0.50,
+        0.20,
+        0.01,
+        key="rainfall_variation",
+    )
+    rainfall_speed = st.sidebar.slider(
+        "강우 변화 속도",
+        0.2,
+        4.0,
+        1.0,
+        0.1,
+        key="rainfall_speed",
+    )
     rainfall_min, rainfall_max = rainfall_variation_bounds(rainfall, rainfall_variation)
     st.sidebar.caption(
         f"범위 {rainfall_min:.2f}~{rainfall_max:.2f} · 변동량 0이면 고정"
     )
 
     st.sidebar.subheader("파이프")
-    pipe_capacity = st.sidebar.slider("파이프 용량", 0.2, 1.5, 1.00, 0.05)
+    pipe_capacity = st.sidebar.slider(
+        "파이프 용량",
+        0.2,
+        1.5,
+        1.00,
+        0.05,
+        key="pipe_capacity",
+    )
 
     blockage_configs: dict[str, tuple[BlockageLocation, float]] = {}
 
@@ -1350,8 +1642,8 @@ def main() -> None:
         drain_label = drain_id[-1]
         location = st.sidebar.selectbox(
             f"{drain_label} 위치",
-            options=["없음", "상부", "내부", "복합"],
-            index=["없음", "상부", "내부", "복합"].index(DEFAULT_LOCATIONS[drain_id]),
+            options=list(BLOCKAGE_LOCATION_OPTIONS),
+            index=list(BLOCKAGE_LOCATION_OPTIONS).index(DEFAULT_LOCATIONS[drain_id]),
             key=f"{drain_id}_location",
         )
         severity = st.sidebar.slider(
@@ -1366,13 +1658,34 @@ def main() -> None:
 
     st.sidebar.divider()
     st.sidebar.subheader("막힘 변동")
-    blockage_amplitude = st.sidebar.slider("막힘 변동량", 0.0, 0.25, 0.05, 0.01)
-    blockage_speed = st.sidebar.slider("막힘 변화 속도", 0.2, 4.0, 0.8, 0.1)
+    blockage_amplitude = st.sidebar.slider(
+        "막힘 변동량",
+        0.0,
+        0.25,
+        0.05,
+        0.01,
+        key="blockage_amplitude",
+    )
+    blockage_speed = st.sidebar.slider(
+        "막힘 변화 속도",
+        0.2,
+        4.0,
+        0.8,
+        0.1,
+        key="blockage_speed",
+    )
     st.sidebar.caption("변동량 0이면 기준 막힘 정도로 고정됩니다.")
 
     st.sidebar.divider()
     st.sidebar.subheader("진행")
-    auto_interval_ms = st.sidebar.slider("진행 간격(ms)", 800, 5000, 1500, 100)
+    auto_interval_ms = st.sidebar.slider(
+        "진행 간격(ms)",
+        800,
+        5000,
+        1500,
+        100,
+        key="auto_interval_ms",
+    )
     progress_cols = st.sidebar.columns(2)
     start_clicked = progress_cols[0].button("시작", width="stretch")
     stop_clicked = progress_cols[1].button("정지", width="stretch")
@@ -1398,6 +1711,17 @@ def main() -> None:
     st.sidebar.caption(
         f"적용값: 강우 {applied_rainfall:.2f} · {format_blockage_preview(applied_blockage_configs)}"
     )
+    current_preset = build_current_preset(
+        base_rainfall=rainfall,
+        rainfall_variation=rainfall_variation,
+        rainfall_speed=rainfall_speed,
+        pipe_capacity=pipe_capacity,
+        blockage_configs=blockage_configs,
+        blockage_amplitude=blockage_amplitude,
+        blockage_speed=blockage_speed,
+        auto_interval_ms=auto_interval_ms,
+    )
+    render_preset_share_panel(current_preset)
 
     if reset_clicked:
         reset_simulation()

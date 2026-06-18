@@ -1,10 +1,14 @@
 from app import (
+    PRESET_VERSION,
+    apply_preset_to_session_state,
+    build_current_preset,
     build_dynamic_blockage_configs,
     build_latest_endpoint_url,
     build_runtime_sensor_payload,
     rainfall_variation_bounds,
     resolve_dynamic_inputs,
     smooth_cycle_value,
+    validate_preset,
 )
 from sensor_model import attach_sensor_status
 from simulation import DRAIN_IDS, initialize_drain_states
@@ -169,3 +173,101 @@ def test_build_runtime_sensor_payload_includes_records_and_runtime_metadata():
     assert payload["rainfall"] == 0.7
     assert len(payload["records"]) == 3
     assert {record["drain_id"] for record in payload["records"]} == set(DRAIN_IDS)
+
+
+def test_build_current_preset_contains_portable_sidebar_settings():
+    preset = build_current_preset(
+        base_rainfall=0.7,
+        rainfall_variation=0.2,
+        rainfall_speed=1.1,
+        pipe_capacity=1.0,
+        blockage_configs={
+            "DRAIN_A": ("없음", 0.0),
+            "DRAIN_B": ("상부", 0.55),
+            "DRAIN_C": ("복합", 0.85),
+        },
+        blockage_amplitude=0.05,
+        blockage_speed=0.8,
+        auto_interval_ms=1500,
+    )
+
+    assert preset["preset_version"] == PRESET_VERSION
+    assert preset["rainfall"] == {"base": 0.7, "variation": 0.2, "speed": 1.1}
+    assert preset["pipe"] == {"capacity": 1.0}
+    assert preset["blockages"]["DRAIN_B"] == {"location": "상부", "severity": 0.55}
+    assert preset["simulation"] == {"auto_interval_ms": 1500}
+
+
+def test_validate_preset_accepts_valid_sidebar_settings():
+    preset = build_current_preset(
+        base_rainfall=0.6,
+        rainfall_variation=0.1,
+        rainfall_speed=2.0,
+        pipe_capacity=1.2,
+        blockage_configs={
+            "DRAIN_A": ("없음", 0.0),
+            "DRAIN_B": ("내부", 0.4),
+            "DRAIN_C": ("복합", 0.8),
+        },
+        blockage_amplitude=0.04,
+        blockage_speed=1.5,
+        auto_interval_ms=2000,
+    )
+
+    normalized = validate_preset(preset)
+
+    assert normalized["rainfall"]["base"] == 0.6
+    assert normalized["blockages"]["DRAIN_B"]["location"] == "내부"
+    assert normalized["simulation"]["auto_interval_ms"] == 2000
+
+
+def test_validate_preset_rejects_invalid_values_without_partial_apply():
+    preset = build_current_preset(
+        base_rainfall=0.6,
+        rainfall_variation=0.1,
+        rainfall_speed=2.0,
+        pipe_capacity=1.2,
+        blockage_configs={
+            "DRAIN_A": ("없음", 0.0),
+            "DRAIN_B": ("내부", 0.4),
+            "DRAIN_C": ("복합", 0.8),
+        },
+        blockage_amplitude=0.04,
+        blockage_speed=1.5,
+        auto_interval_ms=2000,
+    )
+    preset["blockages"]["DRAIN_B"]["location"] = "하부"
+
+    try:
+        validate_preset(preset)
+    except ValueError as exc:
+        assert "DRAIN_B.location" in str(exc)
+    else:
+        raise AssertionError("invalid preset location should fail validation")
+
+
+def test_apply_preset_to_session_state_sets_widget_keys():
+    preset = build_current_preset(
+        base_rainfall=0.5,
+        rainfall_variation=0.0,
+        rainfall_speed=1.0,
+        pipe_capacity=0.9,
+        blockage_configs={
+            "DRAIN_A": ("상부", 0.3),
+            "DRAIN_B": ("없음", 0.0),
+            "DRAIN_C": ("내부", 0.7),
+        },
+        blockage_amplitude=0.0,
+        blockage_speed=0.8,
+        auto_interval_ms=1200,
+    )
+    session_state = {}
+
+    apply_preset_to_session_state(preset, session_state)
+
+    assert session_state["rainfall_base"] == 0.5
+    assert session_state["rainfall_variation"] == 0.0
+    assert session_state["pipe_capacity"] == 0.9
+    assert session_state["DRAIN_A_location"] == "상부"
+    assert session_state["DRAIN_C_severity"] == 0.7
+    assert session_state["auto_interval_ms"] == 1200
